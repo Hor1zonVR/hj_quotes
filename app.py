@@ -65,6 +65,7 @@ _MUTED_ADDED_DIV_RE = re.compile(
 )
 _ANY_HTML_TAG_RE = re.compile(r"</?[^>]+>")
 
+
 def clean_quote_text(text: str) -> str:
     """
     Removes accidentally-saved 'Added: ...' div and strips remaining tags
@@ -76,7 +77,6 @@ def clean_quote_text(text: str) -> str:
     s = text.strip()
     s = _MUTED_ADDED_DIV_RE.sub("", s).strip()
 
-    # If it still looks like HTML, strip tags
     lower = s.lower()
     if "<div" in lower or "</div" in lower or "<span" in lower or "<br" in lower or "<p" in lower:
         s = _ANY_HTML_TAG_RE.sub("", s)
@@ -85,9 +85,8 @@ def clean_quote_text(text: str) -> str:
     return s
 
 
-# ---------- Copy button (no key= on components.html) ----------
+# ---------- Copy button ----------
 def copy_button(text_to_copy: str, element_id: str, label: str = "📋 Copy"):
-    # Escape for JS string
     safe = (text_to_copy or "").replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
     html = f"""
@@ -109,7 +108,6 @@ def copy_button(text_to_copy: str, element_id: str, label: str = "📋 Copy"):
           const btn = document.getElementById("{element_id}");
           if (!btn) return;
 
-          // Prevent double-binding if Streamlit re-renders
           if (btn.dataset.bound === "1") return;
           btn.dataset.bound = "1";
 
@@ -129,7 +127,7 @@ def copy_button(text_to_copy: str, element_id: str, label: str = "📋 Copy"):
       </script>
     </div>
     """
-    components.html(html, height=52)  # <- no key parameter
+    components.html(html, height=52)
 
 
 # ---------- Session ----------
@@ -156,23 +154,8 @@ st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.markdown(
     """
     <style>
-    .big-font { font-size:18px !important; line-height:1.45; }
-    .quote-card {
-        padding:14px;
-        border-radius:12px;
-        background:#111827;
-        border:1px solid #374151;
-        margin-bottom:10px;
-    }
-    .quote-author { color:#9ca3af; font-size:14px; margin-top:8px; }
-    .chat {
-        padding:10px;
-        border-radius:10px;
-        margin-bottom:8px;
-        background:#0b1220;
-        border:1px solid #1f2937;
-    }
-    .muted { color:#9ca3af; font-size:12px; }
+    /* Small cosmetic improvements */
+    .stButton>button { border-radius: 10px; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -254,22 +237,18 @@ if st.session_state.page == "Quotes":
             created_raw = (q.get("created_at") or "").strip()
 
             label = f"“{q_text}”" if q_text else "“(empty)”"
-            author_html = f'<div class="quote-author">— {q_author}</div>' if q_author else ""
-            created_html = f'<div class="muted">Added: {pretty_ts(created_raw)}</div>' if created_raw else ""
 
+            # quote | copy | delete
             left, cpy, delc = st.columns([8, 1.3, 0.7], vertical_alignment="top")
 
             with left:
-                st.markdown(
-                    f"""
-                    <div class="quote-card">
-                        <div class="big-font">{label}</div>
-                        {author_html}
-                        {created_html}
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                # Streamlit-native UI (no HTML injection → no raw HTML appearing)
+                with st.container(border=True):
+                    st.markdown(f"### {label}")
+                    if q_author:
+                        st.caption(f"— {q_author}")
+                    if created_raw:
+                        st.caption(f"Added: {pretty_ts(created_raw)}")
 
             with cpy:
                 to_copy = q_text + (f" — {q_author}" if q_author else "")
@@ -303,17 +282,11 @@ if st.session_state.page == "Chat":
                 user = (m.get("user") or "").strip()
                 text = (m.get("text") or "").strip()
                 ts_raw = (m.get("ts") or "").strip()
-                ts_html = f'<span class="muted">{pretty_ts(ts_raw)}</span>' if ts_raw else ""
 
-                st.markdown(
-                    f"""
-                    <div class="chat">
-                        <b>{user}:</b> {text}<br/>
-                        {ts_html}
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                with st.container(border=True):
+                    st.markdown(f"**{user}:** {text}")
+                    if ts_raw:
+                        st.caption(pretty_ts(ts_raw))
 
         with st.form("send_msg", clear_on_submit=True):
             msg = st.text_input("Message", placeholder="Type a message…")
