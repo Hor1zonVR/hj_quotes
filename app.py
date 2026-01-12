@@ -79,14 +79,29 @@ def clean_quote_text(text: str) -> str:
     return s
 
 
-# ---------- Copy button (Spotify-ish pill) ----------
+# ---------- Copy button (fully self-styled so it never turns white) ----------
 def copy_button(text_to_copy: str, element_id: str, label: str = "Copy"):
     safe = (text_to_copy or "").replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
     html = f"""
-    <div>
-      <button id="{element_id}" class="spotify-pill" title="Copy to clipboard">
-        <span style="margin-right:8px;">📋</span>{label}
-      </button>
+    <div style="width:100%;">
+      <style>
+        .hj-copy {{
+          width: 100%;
+          padding: 10px 12px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: #1DB954;
+          color: #0b0f0c;
+          cursor: pointer;
+          font-weight: 900;
+          letter-spacing: 0.01em;
+        }}
+        .hj-copy:hover {{
+          background: #1ed760;
+        }}
+      </style>
+
+      <button id="{element_id}" class="hj-copy" title="Copy to clipboard">📋 {label}</button>
 
       <script>
         (function() {{
@@ -98,20 +113,20 @@ def copy_button(text_to_copy: str, element_id: str, label: str = "Copy"):
           btn.addEventListener("click", async () => {{
             try {{
               await navigator.clipboard.writeText("{safe}");
-              const old = btn.innerHTML;
-              btn.innerHTML = "✅ Copied";
-              setTimeout(() => btn.innerHTML = old, 900);
+              const old = btn.innerText;
+              btn.innerText = "✅ Copied";
+              setTimeout(() => btn.innerText = old, 900);
             }} catch (e) {{
-              const old = btn.innerHTML;
-              btn.innerHTML = "❌ Failed";
-              setTimeout(() => btn.innerHTML = old, 900);
+              const old = btn.innerText;
+              btn.innerText = "❌ Failed";
+              setTimeout(() => btn.innerText = old, 900);
             }}
           }});
         }})();
       </script>
     </div>
     """
-    components.html(html, height=56)
+    components.html(html, height=60)
 
 
 # ---------- Session ----------
@@ -121,6 +136,9 @@ if "user_id" not in st.session_state:
 if "username" not in st.session_state:
     st.session_state.username = ""
 
+if "page" not in st.session_state:
+    st.session_state.page = "Quotes"
+
 if "pending_delete_quote_id" not in st.session_state:
     st.session_state.pending_delete_quote_id = None
 
@@ -128,43 +146,55 @@ if "pending_delete_quote_label" not in st.session_state:
     st.session_state.pending_delete_quote_label = ""
 
 
-# ---------- Page config + Spotify-ish CSS ----------
+# ---------- Page config + Spotify-ish UI ----------
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
 st.markdown(
     """
     <style>
-      /* ===== Spotify-ish theme ===== */
       :root{
-        --bg0:#0b0f0c;         /* app background */
-        --bg1:#121212;         /* card background */
-        --bg2:#181818;         /* hover/raised */
-        --stroke:#2a2a2a;      /* borders */
+        --bg0:#0b0f0c;
+        --bg1:#121212;
+        --bg2:#181818;
+        --stroke:rgba(255,255,255,0.10);
         --text:#ffffff;
         --muted:#b3b3b3;
-        --green:#1DB954;       /* Spotify green */
-        --green2:#1ed760;      /* hover green */
+        --green:#1DB954;
+        --green2:#1ed760;
       }
 
-      /* App canvas */
       .stApp {
-        background: radial-gradient(1200px 700px at 15% -10%, rgba(29,185,84,0.18), transparent 55%),
-                    radial-gradient(900px 600px at 95% 0%, rgba(29,185,84,0.10), transparent 45%),
-                    var(--bg0);
+        background:
+          radial-gradient(1200px 700px at 15% -10%, rgba(29,185,84,0.22), transparent 55%),
+          radial-gradient(900px 600px at 95% 0%, rgba(29,185,84,0.12), transparent 45%),
+          var(--bg0);
         color: var(--text);
       }
 
-      /* Container width padding */
-      .block-container { padding-top: 1.1rem; padding-bottom: 2.2rem; }
+      .block-container {
+        padding-top: 1.0rem;
+        padding-bottom: 2.2rem;
+      }
 
-      /* Sidebar */
+      /* Sidebar “left rail” look */
       section[data-testid="stSidebar"]{
         background: linear-gradient(180deg, rgba(18,18,18,0.98), rgba(12,12,12,0.98));
         border-right: 1px solid rgba(255,255,255,0.06);
       }
 
-      /* Headings spacing */
-      h1, h2, h3 { letter-spacing: -0.02em; }
+      /* Hero header card */
+      .hj-hero {
+        border-radius: 18px;
+        padding: 18px 18px;
+        border: 1px solid rgba(255,255,255,0.10);
+        background:
+          radial-gradient(900px 350px at 20% 0%, rgba(29,185,84,0.35), transparent 55%),
+          rgba(18,18,18,0.70);
+        box-shadow: 0 14px 40px rgba(0,0,0,0.35);
+        margin-bottom: 14px;
+      }
+      .hj-hero h1 { margin: 0; letter-spacing: -0.03em; }
+      .hj-hero .sub { color: var(--muted); margin-top: 6px; }
 
       /* Streamlit bordered containers -> Spotify cards */
       [data-testid="stVerticalBlockBorderWrapper"]{
@@ -182,74 +212,59 @@ st.markdown(
       .stTextInput input, .stTextArea textarea {
         border-radius: 14px !important;
         border: 1px solid rgba(255,255,255,0.12) !important;
-        background: rgba(18,18,18,0.9) !important;
+        background: rgba(18,18,18,0.92) !important;
       }
       .stSelectbox div[data-baseweb="select"] > div{
         border-radius: 14px !important;
         border: 1px solid rgba(255,255,255,0.12) !important;
-        background: rgba(18,18,18,0.9) !important;
+        background: rgba(18,18,18,0.92) !important;
       }
 
-      /* Primary buttons -> green pill */
+      /* Primary buttons -> Spotify green pill */
       .stButton > button[kind="primary"]{
         background: var(--green) !important;
         color: #0b0f0c !important;
         border: 1px solid rgba(0,0,0,0.0) !important;
         border-radius: 999px !important;
-        font-weight: 800 !important;
+        font-weight: 900 !important;
       }
       .stButton > button[kind="primary"]:hover{
         background: var(--green2) !important;
       }
 
-      /* Normal buttons */
+      /* Regular buttons */
       .stButton > button{
         border-radius: 999px !important;
         border: 1px solid rgba(255,255,255,0.14) !important;
         background: rgba(255,255,255,0.04) !important;
-        font-weight: 700 !important;
+        font-weight: 800 !important;
       }
       .stButton > button:hover{
         background: rgba(255,255,255,0.07) !important;
         border-color: rgba(255,255,255,0.18) !important;
       }
 
-      /* Tabs */
-      button[data-baseweb="tab"]{
-        border-radius: 999px !important;
-        margin-right: 8px !important;
-        background: rgba(255,255,255,0.04) !important;
-        border: 1px solid rgba(255,255,255,0.10) !important;
-      }
-      button[data-baseweb="tab"][aria-selected="true"]{
-        background: rgba(29,185,84,0.14) !important;
-        border-color: rgba(29,185,84,0.35) !important;
+      /* Make radio nav bigger + remove weird red text by forcing colors */
+      section[data-testid="stSidebar"] label, section[data-testid="stSidebar"] p, section[data-testid="stSidebar"] span{
+        color: var(--text) !important;
       }
 
-      /* Captions muted */
-      .stCaption, .stMarkdown p, .stMarkdown span {
-        color: var(--text);
-      }
-      .muted { color: var(--muted); }
-
-      /* Custom pill used by copy button (inside components.html) */
-      .spotify-pill{
-        width:100%;
-        padding:10px 12px;
-        border-radius:999px;
-        border:1px solid rgba(255,255,255,0.14);
-        background: rgba(255,255,255,0.04);
-        color: white;
-        cursor:pointer;
-        font-weight: 800;
-        letter-spacing: 0.01em;
-      }
-      .spotify-pill:hover{
-        background: rgba(255,255,255,0.07);
-        border-color: rgba(255,255,255,0.18);
+      /* Radio options padding / pill feel */
+      section[data-testid="stSidebar"] div[role="radiogroup"] > label{
+        border: 1px solid rgba(255,255,255,0.10);
+        background: rgba(255,255,255,0.03);
+        border-radius: 14px;
+        padding: 10px 12px;
+        margin: 8px 0;
       }
 
-      /* Make dividers subtle */
+      /* “Selected” styling (best-effort; Streamlit DOM can vary slightly) */
+      section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked){
+        border-color: rgba(29,185,84,0.45) !important;
+        background: rgba(29,185,84,0.16) !important;
+      }
+
+      /* Dividers subtle */
       hr { border-color: rgba(255,255,255,0.08) !important; }
     </style>
     """,
@@ -259,37 +274,51 @@ st.markdown(
 # ---------- Refresh ----------
 st_autorefresh(interval=POLL_SECONDS * 1000, key="refresh")
 
-# ---------- Header ----------
-lh, rh = st.columns([1.4, 1])
-with lh:
-    st.title(APP_TITLE)
-    st.caption("Spotify-ish dark • neon green • clean cards")
-with rh:
-    st.caption(f"Auto-refresh: every {POLL_SECONDS}s")
-
-
-# ---------- Sidebar ----------
+# ---------- Sidebar “left rail” navigation ----------
 with st.sidebar:
-    st.subheader("Settings")
+    st.markdown("### Navigation")
+    st.session_state.page = st.radio(
+        label="",
+        options=["Quotes", "Chat"],
+        index=0 if st.session_state.page == "Quotes" else 1,
+        format_func=lambda x: "📚  Quotes" if x == "Quotes" else "💬  Chat",
+        label_visibility="collapsed",
+    )
+
+    st.divider()
+    st.markdown("### Settings")
     st.session_state.username = st.text_input(
         "Username",
         value=st.session_state.username,
         placeholder="Enter your name",
     )
+
+    c_a, c_b = st.columns(2)
+    with c_a:
+        if st.button("🔄 Refresh", use_container_width=True):
+            clear_cache_and_rerun()
+    with c_b:
+        st.caption(f"{POLL_SECONDS}s poll")
+
     st.divider()
-    if st.button("🔄 Refresh now", use_container_width=True):
-        clear_cache_and_rerun()
-    st.caption("Tip: Use search + sort to find quotes fast.")
+    st.caption("Tip: Search + sort on Quotes like a playlist.")
 
 
-# ---------- Tabs ----------
-tab_quotes, tab_chat = st.tabs(["📚 Quotes", "💬 Chat"])
-
+# ---------- Hero header ----------
+st.markdown(
+    f"""
+    <div class="hj-hero">
+      <h1>{APP_TITLE}</h1>
+      <div class="sub">Spotify-ish layout • left rail • playlist-style cards • copy in one tap</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ==========================================
 # ================ QUOTES ==================
 # ==========================================
-with tab_quotes:
+if st.session_state.page == "Quotes":
     with st.container(border=True):
         st.subheader("Quotes")
         c1, c2, c3 = st.columns([2.2, 1.2, 1.2])
@@ -358,16 +387,20 @@ with tab_quotes:
         st.markdown("#### Your quotes")
         st.caption(f"{len(normalized)} shown")
 
+        # Playlist-style list (card per item, tight)
         for qid, q_text, q_author, created_raw in normalized:
             label = f"“{q_text}”" if q_text else "“(empty)”"
             to_copy = q_text + (f" — {q_author}" if q_author else "")
 
             with st.container(border=True):
                 st.markdown(f"### {label}")
+                meta_line = []
                 if q_author:
-                    st.caption(f"— {q_author}")
+                    meta_line.append(f"— {q_author}")
                 if show_meta and created_raw:
-                    st.caption(f"Added: {pretty_ts(created_raw)}")
+                    meta_line.append(f"Added: {pretty_ts(created_raw)}")
+                if meta_line:
+                    st.caption(" • ".join(meta_line))
 
                 a1, a2, _ = st.columns([1.2, 1.0, 8.0])
                 with a1:
@@ -384,12 +417,13 @@ with tab_quotes:
 # ==========================================
 # ================= CHAT ===================
 # ==========================================
-with tab_chat:
-    st.subheader("Chat")
+if st.session_state.page == "Chat":
+    with st.container(border=True):
+        st.subheader("Chat")
+        if not st.session_state.username.strip():
+            st.warning("Set a username in the sidebar to chat.")
 
-    if not st.session_state.username.strip():
-        st.warning("Set a username in the sidebar to chat.")
-    else:
+    if st.session_state.username.strip():
         messages = get_data_cached("/chat") or {}
         items = sorted(messages.items(), key=lambda x: (x[1].get("ts") or ""))
 
