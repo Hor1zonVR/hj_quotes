@@ -133,4 +133,4 @@ if st.session_state.page == "Chat":
 
 # ---------- Auto refresh ----------
 time.sleep(POLL_SECONDS)
-st.experimental_rerun()
+st.rerun()
