@@ -16,9 +16,17 @@ def fb(path: str) -> str:
     return f"{FIREBASE_DB_URL}{path}.json"
 
 
-# ---------- Helpers ----------
-def now() -> str:
-    return datetime.utcnow().isoformat() + "Z"
+def now_iso_z() -> str:
+    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def pretty_ts(iso_z: str) -> str:
+    """Convert '2025-10-23T00:50:27Z' -> '23 Oct 2025, 00:50 UTC' """
+    try:
+        dt = datetime.fromisoformat(iso_z.replace("Z", "+00:00"))
+        return dt.strftime("%d %b %Y, %H:%M UTC")
+    except Exception:
+        return iso_z
 
 
 def _safe_json(resp):
@@ -43,7 +51,6 @@ def delete_data(path: str):
 
 
 def clear_cache_and_rerun():
-    # Ensure the next run fetches fresh data after writes/deletes
     st.cache_data.clear()
     st.rerun()
 
@@ -65,13 +72,14 @@ if "pending_delete_quote_id" not in st.session_state:
 if "pending_delete_quote_label" not in st.session_state:
     st.session_state.pending_delete_quote_label = ""
 
+
 # ---------- UI ----------
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
 st.markdown(
     """
     <style>
-    .big-font { font-size:18px !important; line-height:1.4; }
+    .big-font { font-size:18px !important; line-height:1.45; }
     .quote-card {
         padding:14px;
         border-radius:12px;
@@ -95,9 +103,9 @@ st.markdown(
 
 st.title(APP_TITLE)
 
-# ---------- Auto refresh ----------
-# Refresh app view every POLL_SECONDS without manual sleep/rerun loops.
+# ---------- Auto refresh (Option A) ----------
 st_autorefresh(interval=POLL_SECONDS * 1000, key="refresh")
+
 
 # ---------- Sidebar ----------
 with st.sidebar:
@@ -114,6 +122,7 @@ with st.sidebar:
     st.divider()
     if st.button("🔄 Refresh now"):
         clear_cache_and_rerun()
+
 
 # ==========================================
 # ================ QUOTES ==================
@@ -132,18 +141,18 @@ if st.session_state.page == "Quotes":
                 {
                     "text": text.strip(),
                     "author": author.strip(),
-                    "created_at": now(),
+                    "created_at": now_iso_z(),
                 },
             )
             clear_cache_and_rerun()
 
-    # ---- Delete confirmation modal-ish section ----
+    # ---- Delete confirmation box ----
     if st.session_state.pending_delete_quote_id:
         with st.container(border=True):
             st.warning("Delete quote?")
             st.write(st.session_state.pending_delete_quote_label)
 
-            c1, c2, c3 = st.columns([1, 1, 6])
+            c1, c2, _ = st.columns([1, 1, 6])
             with c1:
                 if st.button("✅ Confirm delete", type="primary"):
                     delete_data(f"/quotes/{st.session_state.pending_delete_quote_id}")
@@ -164,20 +173,21 @@ if st.session_state.page == "Quotes":
         # Newest first
         items = sorted(
             quotes.items(),
-            key=lambda x: x[1].get("created_at", ""),
+            key=lambda x: (x[1].get("created_at") or ""),
             reverse=True,
         )
 
         for qid, q in items:
             q_text = (q.get("text") or "").strip()
             q_author = (q.get("author") or "").strip()
-            created = q.get("created_at", "")
+            created_raw = (q.get("created_at") or "").strip()
 
             label = f"“{q_text}”" if q_text else "“(empty)”"
-            if q_author:
-                author_line = f"— {q_author}"
-            else:
-                author_line = ""
+
+            author_html = f'<div class="quote-author">— {q_author}</div>' if q_author else ""
+            created_html = (
+                f'<div class="muted">Added: {pretty_ts(created_raw)}</div>' if created_raw else ""
+            )
 
             left, right = st.columns([9, 1], vertical_alignment="top")
             with left:
@@ -185,8 +195,8 @@ if st.session_state.page == "Quotes":
                     f"""
                     <div class="quote-card">
                         <div class="big-font">{label}</div>
-                        {"<div class='quote-author'>" + author_line + "</div>" if author_line else ""}
-                        {"<div class='muted'>Added: " + created + "</div>" if created else ""}
+                        {author_html}
+                        {created_html}
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -194,8 +204,11 @@ if st.session_state.page == "Quotes":
             with right:
                 if st.button("🗑", key=f"ask_del_{qid}", help="Delete"):
                     st.session_state.pending_delete_quote_id = qid
-                    st.session_state.pending_delete_quote_label = label + (f" {author_line}" if author_line else "")
+                    st.session_state.pending_delete_quote_label = (
+                        label + (f" — {q_author}" if q_author else "")
+                    )
                     st.rerun()
+
 
 # ==========================================
 # ================= CHAT ===================
@@ -208,28 +221,28 @@ if st.session_state.page == "Chat":
     else:
         messages = get_data_cached("/chat") or {}
 
-        # Chat usually shows oldest -> newest (new messages at bottom)
-        items = sorted(messages.items(), key=lambda x: x[1].get("ts", ""))
+        # Oldest -> newest (classic chat)
+        items = sorted(messages.items(), key=lambda x: (x[1].get("ts") or ""))
 
-        chat_box = st.container()
-        with chat_box:
-            if not items:
-                st.info("No chat messages yet.")
-            else:
-                for mid, m in items:
-                    user = (m.get("user") or "").strip()
-                    text = (m.get("text") or "").strip()
-                    ts = m.get("ts", "")
+        if not items:
+            st.info("No chat messages yet.")
+        else:
+            for _, m in items:
+                user = (m.get("user") or "").strip()
+                text = (m.get("text") or "").strip()
+                ts_raw = (m.get("ts") or "").strip()
 
-                    st.markdown(
-                        f"""
-                        <div class="chat">
-                            <b>{user}:</b> {text}<br/>
-                            <span class="muted">{ts}</span>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
+                ts_html = f'<span class="muted">{pretty_ts(ts_raw)}</span>' if ts_raw else ""
+
+                st.markdown(
+                    f"""
+                    <div class="chat">
+                        <b>{user}:</b> {text}<br/>
+                        {ts_html}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
         with st.form("send_msg", clear_on_submit=True):
             msg = st.text_input("Message", placeholder="Type a message…")
@@ -241,7 +254,7 @@ if st.session_state.page == "Chat":
                     {
                         "user": st.session_state.username.strip(),
                         "text": msg.strip(),
-                        "ts": now(),
+                        "ts": now_iso_z(),
                     },
                 )
                 clear_cache_and_rerun()
