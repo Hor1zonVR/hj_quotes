@@ -85,7 +85,7 @@ if st.session_state.page == "Quotes":
                 "author": author.strip(),
                 "created_at": now()
             })
-            st.experimental_rerun()
+            st.rerun()
 
     quotes = get_data("/quotes") or {}
 
@@ -100,7 +100,7 @@ if st.session_state.page == "Quotes":
         with col1:
             if st.button("🗑", key=f"del_{qid}"):
                 delete_data(f"/quotes/{qid}")
-                st.experimental_rerun()
+                st.rerun()
 
 # ==========================================
 # ================= CHAT ===================
