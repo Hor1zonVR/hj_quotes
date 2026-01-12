@@ -11,9 +11,9 @@ from streamlit_autorefresh import st_autorefresh
 
 # ================= CONFIG =================
 FIREBASE_DB_URL = "https://quotesaver-e8fae-default-rtdb.europe-west1.firebasedatabase.app"
-POLL_SECONDS = 2
+POLL_SECONDS = 2                 # used ONLY for Chat refresh now
 APP_TITLE = "HJ Quotes"
-CACHE_TTL_SECONDS = 2
+CACHE_TTL_SECONDS = 10           # a bit higher because we now do optimistic UI
 # ==========================================
 
 
@@ -35,8 +35,15 @@ def get_data_cached(path: str):
     return _safe_json(r) or {}
 
 
-def post_data(path: str, data: dict):
-    requests.post(fb(path), json=data, timeout=8)
+def post_data_return_key(path: str, data: dict) -> str | None:
+    # Firebase RTDB POST returns {"name": "<generated_key>"}
+    r = requests.post(fb(path), json=data, timeout=8)
+    if not r.ok:
+        return None
+    try:
+        return (r.json() or {}).get("name")
+    except Exception:
+        return None
 
 
 def put_value(path: str, value):
@@ -47,8 +54,11 @@ def delete_data(path: str):
     requests.delete(fb(path), timeout=8)
 
 
-def clear_cache_and_rerun():
+def refresh_all_data():
+    """Hard refresh: clear cache and reload quotes/collections into session."""
     st.cache_data.clear()
+    st.session_state.quotes = get_data_cached("/quotes") or {}
+    st.session_state.collections = get_data_cached("/collections") or {}
     st.rerun()
 
 
@@ -85,7 +95,7 @@ def clean_quote_text(text: str) -> str:
     return s
 
 
-# ---------- Copy button (animated + Spotify green, self-styled) ----------
+# ---------- Copy button (fast + animated, stays green) ----------
 def copy_button(text_to_copy: str, element_id: str, label: str = "Copy"):
     safe = (text_to_copy or "").replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
     html = f"""
@@ -175,11 +185,11 @@ if "pending_delete_quote_id" not in st.session_state:
 if "pending_delete_quote_label" not in st.session_state:
     st.session_state.pending_delete_quote_label = ""
 
-# Smooth animation: pulse hero after key actions
+# Smooth feedback
 if "pulse_hero" not in st.session_state:
     st.session_state.pulse_hero = False
 
-# NEW: last action highlight (fav / collections save / delete)
+# Last-action glow
 if "last_action_qid" not in st.session_state:
     st.session_state.last_action_qid = None
 if "last_action_ts" not in st.session_state:
@@ -194,7 +204,15 @@ def mark_last_action(qid: str | None):
 def should_flash(qid: str) -> bool:
     if st.session_state.last_action_qid != qid:
         return False
-    return (time.time() - float(st.session_state.last_action_ts or 0.0)) <= 1.2
+    return (time.time() - float(st.session_state.last_action_ts or 0.0)) <= 1.1
+
+
+# ---------- Load data once per session (then optimistic updates) ----------
+if "quotes" not in st.session_state:
+    st.session_state.quotes = get_data_cached("/quotes") or {}
+
+if "collections" not in st.session_state:
+    st.session_state.collections = get_data_cached("/collections") or {}
 
 
 # ---------- Page config + Spotify-ish UI ----------
@@ -205,8 +223,6 @@ st.markdown(
     <style>
       :root{
         --bg0:#0b0f0c;
-        --bg1:#121212;
-        --bg2:#181818;
         --text:#ffffff;
         --muted:#b3b3b3;
         --green:#1DB954;
@@ -246,10 +262,14 @@ st.markdown(
         border: 1px solid rgba(255,255,255,0.08) !important;
         background: rgba(18,18,18,0.85) !important;
         box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+        transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease, border-color 160ms ease;
+        will-change: transform;
       }
       [data-testid="stVerticalBlockBorderWrapper"]:hover{
         background: rgba(24,24,24,0.92) !important;
         border-color: rgba(255,255,255,0.10) !important;
+        transform: translateY(-2px);
+        box-shadow: 0 14px 40px rgba(0,0,0,0.45);
       }
 
       .stTextInput input, .stTextArea textarea {
@@ -270,20 +290,16 @@ st.markdown(
         border-radius: 999px !important;
         font-weight: 900 !important;
       }
-      .stButton > button[kind="primary"]:hover{
-        background: var(--green2) !important;
-      }
+      .stButton > button[kind="primary"]:hover{ background: var(--green2) !important; }
 
       .stButton > button{
         border-radius: 999px !important;
         border: 1px solid rgba(255,255,255,0.14) !important;
         background: rgba(255,255,255,0.04) !important;
         font-weight: 800 !important;
+        transition: transform 120ms ease, background 160ms ease, border-color 160ms ease;
       }
-      .stButton > button:hover{
-        background: rgba(255,255,255,0.07) !important;
-        border-color: rgba(255,255,255,0.18) !important;
-      }
+      .stButton > button:active{ transform: scale(0.97); }
 
       section[data-testid="stSidebar"] label,
       section[data-testid="stSidebar"] p,
@@ -298,47 +314,16 @@ st.markdown(
         padding: 12px 12px;
         margin: 8px 0;
       }
-
       section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked){
         border-color: rgba(29,185,84,0.45) !important;
         background: rgba(29,185,84,0.16) !important;
       }
 
-      hr { border-color: rgba(255,255,255,0.08) !important; }
-
-      /* ===== Smooth animations ===== */
-      @keyframes hjFadeUp {
-        from { opacity: 0; transform: translateY(8px); }
-        to   { opacity: 1; transform: translateY(0px); }
-      }
-      @keyframes hjPulse {
-        0%   { transform: scale(1); }
-        50%  { transform: scale(1.03); }
-        100% { transform: scale(1); }
-      }
+      /* Hero pulse */
+      @keyframes hjPulse { 0%{transform:scale(1)} 50%{transform:scale(1.03)} 100%{transform:scale(1)} }
       .hj-pulse { animation: hjPulse 320ms ease; }
 
-      [data-testid="stVerticalBlockBorderWrapper"]{
-        animation: hjFadeUp 240ms ease-out;
-        transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease, border-color 160ms ease;
-        will-change: transform;
-      }
-      [data-testid="stVerticalBlockBorderWrapper"]:hover{
-        transform: translateY(-2px);
-        box-shadow: 0 14px 40px rgba(0,0,0,0.45);
-      }
-
-      .stButton > button{
-        transition: transform 120ms ease, background 160ms ease, border-color 160ms ease, filter 160ms ease;
-        will-change: transform;
-      }
-      .stButton > button:active{ transform: scale(0.97); }
-
-      .stTextInput input, .stTextArea textarea, .stSelectbox *{
-        transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
-      }
-
-      /* ===== NEW: green glow highlight for last action ===== */
+      /* Quote body + glow highlight */
       @keyframes hjGlow {
         0%   { box-shadow: 0 0 0 rgba(29,185,84,0.0); border-color: rgba(255,255,255,0.10); }
         30%  { box-shadow: 0 0 0 6px rgba(29,185,84,0.10), 0 18px 50px rgba(0,0,0,0.55); border-color: rgba(29,185,84,0.55); }
@@ -351,30 +336,19 @@ st.markdown(
         padding: 12px 14px;
         margin-bottom: 10px;
       }
-      .hj-quote-body.hj-flash{
-        animation: hjGlow 1050ms ease;
-      }
-      .hj-quote-text{
-        font-size: 1.15rem;
-        font-weight: 800;
-        letter-spacing: -0.01em;
-      }
-      .hj-quote-meta{
-        margin-top: 8px;
-        color: rgba(255,255,255,0.72);
-        font-size: 0.85rem;
-      }
+      .hj-quote-body.hj-flash{ animation: hjGlow 1050ms ease; }
+      .hj-quote-text{ font-size: 1.15rem; font-weight: 800; letter-spacing: -0.01em; }
+      .hj-quote-meta{ margin-top: 8px; color: rgba(255,255,255,0.72); font-size: 0.85rem; }
+
+      hr { border-color: rgba(255,255,255,0.08) !important; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# ---------- Refresh ----------
-st_autorefresh(interval=POLL_SECONDS * 1000, key="refresh")
-
-# ---------- Data ----------
-quotes = get_data_cached("/quotes") or {}
-collections = get_data_cached("/collections") or {}
+# ---------- Derived collection lists ----------
+collections = st.session_state.collections
+quotes = st.session_state.quotes
 
 collection_name_by_id = {cid: (c.get("name") or "Untitled").strip() for cid, c in collections.items()}
 collection_ids_sorted = sorted(collection_name_by_id.keys(), key=lambda cid: collection_name_by_id[cid].lower())
@@ -383,7 +357,6 @@ collection_ids_sorted = sorted(collection_name_by_id.keys(), key=lambda cid: col
 # ---------- Sidebar: left rail ----------
 with st.sidebar:
     st.markdown("### Navigation")
-
     st.session_state.page = st.radio(
         label="",
         options=["Quotes", "Chat"],
@@ -393,7 +366,6 @@ with st.sidebar:
     )
 
     st.divider()
-
     st.markdown("### Library")
     view_options = ["All Quotes", "❤️ Favourites"] + [f"📁 {collection_name_by_id[cid]}" for cid in collection_ids_sorted]
     view_choice = st.radio(label="", options=view_options, index=0, label_visibility="collapsed")
@@ -415,25 +387,31 @@ with st.sidebar:
         st.session_state.selected_collection_id = matched
 
     st.divider()
-
     st.markdown("### Create collection")
     with st.form("create_collection", clear_on_submit=True):
         new_name = st.text_input("Name", placeholder="e.g. Stoicism", label_visibility="collapsed")
         make = st.form_submit_button("Create", use_container_width=True)
         if make and new_name.strip():
-            post_data("/collections", {"name": new_name.strip(), "created_at": now_iso_z()})
-            st.session_state.pulse_hero = True
-            mark_last_action(None)
-            st.toast("Collection created ✅")
-            clear_cache_and_rerun()
+            cid = post_data_return_key("/collections", {"name": new_name.strip(), "created_at": now_iso_z()})
+            if cid:
+                # optimistic add
+                st.session_state.collections[cid] = {"name": new_name.strip(), "created_at": now_iso_z()}
+                st.session_state.pulse_hero = True
+                st.toast("Collection created ✅")
+                st.rerun()
 
     st.divider()
-
     st.markdown("### Settings")
     st.session_state.username = st.text_input("Username", value=st.session_state.username, placeholder="Enter your name")
-    if st.button("🔄 Refresh", use_container_width=True):
-        clear_cache_and_rerun()
-    st.caption(f"Polling every {POLL_SECONDS}s")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("🔄 Refresh", use_container_width=True):
+            refresh_all_data()
+    with c2:
+        st.caption("Fast UI")
+
+    st.caption("Tip: Quotes don’t auto-refresh anymore (only Chat does).")
 
 
 # ---------- Hero (pulse after actions) ----------
@@ -444,7 +422,7 @@ st.markdown(
     f"""
     <div class="{hero_class}">
       <h1>{APP_TITLE}</h1>
-      <div class="sub">Favourites • Collections • Smooth animations • Green glow on actions</div>
+      <div class="sub">Favourites • Collections • Optimistic UI (no laggy full refresh on clicks)</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -464,6 +442,7 @@ if st.session_state.page == "Quotes":
         with c3:
             show_meta = st.toggle("Show dates", value=True)
 
+    # Add quote
     with st.container(border=True):
         st.markdown("#### Add a quote")
         with st.form("add_quote", clear_on_submit=True):
@@ -472,20 +451,21 @@ if st.session_state.page == "Quotes":
             submitted = st.form_submit_button("Add Quote", use_container_width=True)
 
             if submitted and text.strip():
-                post_data(
-                    "/quotes",
-                    {
-                        "text": text.strip(),
-                        "author": author.strip(),
-                        "created_at": now_iso_z(),
-                        "fav_by": {},
-                        "collections": {},
-                    },
-                )
-                st.session_state.pulse_hero = True
-                mark_last_action(None)  # new quote id is generated by Firebase; we don't have it here
-                st.toast("Quote added ✅")
-                clear_cache_and_rerun()
+                payload = {
+                    "text": text.strip(),
+                    "author": author.strip(),
+                    "created_at": now_iso_z(),
+                    "fav_by": {},
+                    "collections": {},
+                }
+                qid = post_data_return_key("/quotes", payload)
+                if qid:
+                    # optimistic add (instant)
+                    st.session_state.quotes[qid] = payload
+                    st.session_state.pulse_hero = True
+                    mark_last_action(qid)
+                    st.toast("Quote added ✅")
+                    st.rerun()
 
     # Delete confirmation
     if st.session_state.pending_delete_quote_id:
@@ -495,13 +475,16 @@ if st.session_state.page == "Quotes":
             a, b, _ = st.columns([1, 1, 6])
             with a:
                 if st.button("✅ Confirm delete", type="primary", use_container_width=True):
-                    delete_data(f"/quotes/{st.session_state.pending_delete_quote_id}")
-                    st.session_state.pulse_hero = True
-                    mark_last_action(None)
+                    qid = st.session_state.pending_delete_quote_id
+                    delete_data(f"/quotes/{qid}")
+                    # optimistic remove
+                    st.session_state.quotes.pop(qid, None)
                     st.session_state.pending_delete_quote_id = None
                     st.session_state.pending_delete_quote_label = ""
+                    st.session_state.pulse_hero = True
+                    mark_last_action(None)
                     st.toast("Deleted 🗑️")
-                    clear_cache_and_rerun()
+                    st.rerun()
             with b:
                 if st.button("✖ Cancel", use_container_width=True):
                     st.session_state.pending_delete_quote_id = None
@@ -511,7 +494,7 @@ if st.session_state.page == "Quotes":
     # Normalize quotes
     uid = st.session_state.user_id
     normalized = []
-    for qid, q in quotes.items():
+    for qid, q in (st.session_state.quotes or {}).items():
         q_text = clean_quote_text(q.get("text") or "")
         q_author = (q.get("author") or "").strip()
         created_raw = (q.get("created_at") or "").strip()
@@ -535,7 +518,10 @@ if st.session_state.page == "Quotes":
     # Search
     if q_search.strip():
         needle = q_search.strip().lower()
-        normalized = [r for r in normalized if needle in (r[1] or "").lower() or needle in (r[2] or "").lower()]
+        normalized = [
+            r for r in normalized
+            if needle in (r[1] or "").lower() or needle in (r[2] or "").lower()
+        ]
 
     # Sort
     if sort_mode == "Newest first":
@@ -545,7 +531,7 @@ if st.session_state.page == "Quotes":
     else:
         normalized.sort(key=lambda r: (r[2] or "").lower())
 
-    # Title card
+    # Title
     with st.container(border=True):
         title = "All Quotes"
         if st.session_state.view_mode == "FAV":
@@ -555,13 +541,12 @@ if st.session_state.page == "Quotes":
         st.markdown(f"#### {title}")
         st.caption(f"{len(normalized)} shown")
 
-    # Render quotes
+    # Render
     for qid, q_text, q_author, created_raw, is_fav, col_ids in normalized:
         flash = should_flash(qid)
 
         safe_quote = html_lib.escape(q_text or "")
         safe_author = html_lib.escape(q_author or "")
-
         label_text = f"“{safe_quote}”" if safe_quote else "“(empty)”"
 
         meta_bits = []
@@ -574,7 +559,6 @@ if st.session_state.page == "Quotes":
         to_copy = (q_text or "") + (f" — {q_author}" if q_author else "")
 
         with st.container(border=True):
-            # This block is what glows (we keep it self-contained HTML to apply class safely)
             st.markdown(
                 f"""
                 <div class="hj-quote-body {'hj-flash' if flash else ''}">
@@ -585,7 +569,7 @@ if st.session_state.page == "Quotes":
                 unsafe_allow_html=True,
             )
 
-            # Actions row
+            # Actions row (NO cache clears, optimistic updates)
             a1, a2, a3, a4, _ = st.columns([1.2, 0.95, 1.6, 1.0, 6.0])
 
             with a1:
@@ -594,16 +578,24 @@ if st.session_state.page == "Quotes":
             with a2:
                 fav_label = "💚 Fav" if not is_fav else "✅ Faved"
                 if st.button(fav_label, key=f"fav_{qid}", use_container_width=True):
+                    # optimistic UI first
+                    q = st.session_state.quotes.get(qid, {})
+                    q.setdefault("fav_by", {})
                     if is_fav:
+                        q["fav_by"].pop(uid, None)
                         delete_data(f"/quotes/{qid}/fav_by/{uid}")
                     else:
+                        q["fav_by"][uid] = True
                         put_value(f"/quotes/{qid}/fav_by/{uid}", True)
+
+                    st.session_state.quotes[qid] = q
                     st.session_state.pulse_hero = True
                     mark_last_action(qid)
-                    clear_cache_and_rerun()
+                    st.rerun()
 
             with a3:
                 with st.expander("📁 Collections", expanded=False):
+                    # Map names <-> ids
                     name_to_id = {v: k for k, v in collection_name_by_id.items()}
                     all_names = [collection_name_by_id[cid] for cid in collection_ids_sorted]
                     current_names = [collection_name_by_id[cid] for cid in col_ids if cid in collection_name_by_id]
@@ -614,6 +606,7 @@ if st.session_state.page == "Quotes":
                         default=current_names,
                         key=f"ms_{qid}",
                     )
+
                     if st.button("Save collections", key=f"save_cols_{qid}", type="primary", use_container_width=True):
                         desired_ids = set(name_to_id[n] for n in selected if n in name_to_id)
                         current_ids = set(col_ids)
@@ -621,15 +614,21 @@ if st.session_state.page == "Quotes":
                         to_add = desired_ids - current_ids
                         to_remove = current_ids - desired_ids
 
+                        # optimistic local update
+                        q = st.session_state.quotes.get(qid, {})
+                        q.setdefault("collections", {})
                         for cid in to_add:
+                            q["collections"][cid] = True
                             put_value(f"/quotes/{qid}/collections/{cid}", True)
                         for cid in to_remove:
+                            q["collections"].pop(cid, None)
                             delete_data(f"/quotes/{qid}/collections/{cid}")
 
+                        st.session_state.quotes[qid] = q
                         st.session_state.pulse_hero = True
                         mark_last_action(qid)
                         st.toast("Collections updated ✅")
-                        clear_cache_and_rerun()
+                        st.rerun()
 
             with a4:
                 if st.button("🗑 Delete", key=f"ask_del_{qid}", use_container_width=True):
@@ -644,12 +643,16 @@ if st.session_state.page == "Quotes":
 # ================= CHAT ===================
 # ==========================================
 if st.session_state.page == "Chat":
+    # Auto-refresh ONLY here (this is the main “speed fix”)
+    st_autorefresh(interval=POLL_SECONDS * 1000, key="refresh_chat")
+
     with st.container(border=True):
         st.subheader("Chat")
         if not st.session_state.username.strip():
             st.warning("Set a username in the sidebar to chat.")
 
     if st.session_state.username.strip():
+        # Chat can be fetched live; it’s okay here because the page is already refreshing
         messages = get_data_cached("/chat") or {}
         items = sorted(messages.items(), key=lambda x: (x[1].get("ts") or ""))
 
@@ -673,8 +676,11 @@ if st.session_state.page == "Chat":
                 sent = st.form_submit_button("Send", use_container_width=True)
 
                 if sent and msg.strip():
-                    post_data("/chat", {"user": st.session_state.username.strip(), "text": msg.strip(), "ts": now_iso_z()})
+                    requests.post(
+                        fb("/chat"),
+                        json={"user": st.session_state.username.strip(), "text": msg.strip(), "ts": now_iso_z()},
+                        timeout=8,
+                    )
                     st.session_state.pulse_hero = True
-                    mark_last_action(None)
                     st.toast("Sent ✅")
-                    clear_cache_and_rerun()
+                    st.rerun()
