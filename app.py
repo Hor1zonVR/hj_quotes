@@ -79,22 +79,13 @@ def clean_quote_text(text: str) -> str:
     return s
 
 
-# ---------- Copy button ----------
+# ---------- Copy button (Spotify-ish pill) ----------
 def copy_button(text_to_copy: str, element_id: str, label: str = "Copy"):
     safe = (text_to_copy or "").replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
     html = f"""
     <div>
-      <button id="{element_id}" style="
-          width:100%;
-          padding:8px 10px;
-          border-radius:12px;
-          border:1px solid rgba(255,255,255,0.14);
-          background: rgba(255,255,255,0.06);
-          color: white;
-          cursor:pointer;
-          font-weight: 600;
-      " title="Copy to clipboard">
-        📋 {label}
+      <button id="{element_id}" class="spotify-pill" title="Copy to clipboard">
+        <span style="margin-right:8px;">📋</span>{label}
       </button>
 
       <script>
@@ -107,20 +98,20 @@ def copy_button(text_to_copy: str, element_id: str, label: str = "Copy"):
           btn.addEventListener("click", async () => {{
             try {{
               await navigator.clipboard.writeText("{safe}");
-              const old = btn.innerText;
-              btn.innerText = "✅ Copied";
-              setTimeout(() => btn.innerText = old, 900);
+              const old = btn.innerHTML;
+              btn.innerHTML = "✅ Copied";
+              setTimeout(() => btn.innerHTML = old, 900);
             }} catch (e) {{
-              const old = btn.innerText;
-              btn.innerText = "❌ Failed";
-              setTimeout(() => btn.innerText = old, 900);
+              const old = btn.innerHTML;
+              btn.innerHTML = "❌ Failed";
+              setTimeout(() => btn.innerHTML = old, 900);
             }}
           }});
         }})();
       </script>
     </div>
     """
-    components.html(html, height=54)
+    components.html(html, height=56)
 
 
 # ---------- Session ----------
@@ -137,33 +128,129 @@ if "pending_delete_quote_label" not in st.session_state:
     st.session_state.pending_delete_quote_label = ""
 
 
-# ---------- Page config + styling ----------
+# ---------- Page config + Spotify-ish CSS ----------
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
 st.markdown(
     """
     <style>
-      /* Slightly cleaner spacing */
-      .block-container { padding-top: 1.1rem; padding-bottom: 2.0rem; }
+      /* ===== Spotify-ish theme ===== */
+      :root{
+        --bg0:#0b0f0c;         /* app background */
+        --bg1:#121212;         /* card background */
+        --bg2:#181818;         /* hover/raised */
+        --stroke:#2a2a2a;      /* borders */
+        --text:#ffffff;
+        --muted:#b3b3b3;
+        --green:#1DB954;       /* Spotify green */
+        --green2:#1ed760;      /* hover green */
+      }
 
-      /* Make bordered containers look like “cards” */
+      /* App canvas */
+      .stApp {
+        background: radial-gradient(1200px 700px at 15% -10%, rgba(29,185,84,0.18), transparent 55%),
+                    radial-gradient(900px 600px at 95% 0%, rgba(29,185,84,0.10), transparent 45%),
+                    var(--bg0);
+        color: var(--text);
+      }
+
+      /* Container width padding */
+      .block-container { padding-top: 1.1rem; padding-bottom: 2.2rem; }
+
+      /* Sidebar */
+      section[data-testid="stSidebar"]{
+        background: linear-gradient(180deg, rgba(18,18,18,0.98), rgba(12,12,12,0.98));
+        border-right: 1px solid rgba(255,255,255,0.06);
+      }
+
+      /* Headings spacing */
+      h1, h2, h3 { letter-spacing: -0.02em; }
+
+      /* Streamlit bordered containers -> Spotify cards */
       [data-testid="stVerticalBlockBorderWrapper"]{
         border-radius: 16px !important;
-        border: 1px solid rgba(255,255,255,0.10) !important;
-        background: rgba(255,255,255,0.03) !important;
+        border: 1px solid rgba(255,255,255,0.08) !important;
+        background: rgba(18,18,18,0.85) !important;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+      }
+      [data-testid="stVerticalBlockBorderWrapper"]:hover{
+        background: rgba(24,24,24,0.92) !important;
+        border-color: rgba(255,255,255,0.10) !important;
       }
 
-      /* Buttons nicer */
-      .stButton > button {
-        border-radius: 12px !important;
-        padding: 0.55rem 0.75rem !important;
+      /* Inputs */
+      .stTextInput input, .stTextArea textarea {
+        border-radius: 14px !important;
         border: 1px solid rgba(255,255,255,0.12) !important;
+        background: rgba(18,18,18,0.9) !important;
+      }
+      .stSelectbox div[data-baseweb="select"] > div{
+        border-radius: 14px !important;
+        border: 1px solid rgba(255,255,255,0.12) !important;
+        background: rgba(18,18,18,0.9) !important;
       }
 
-      /* Sidebar polish */
-      section[data-testid="stSidebar"] {
-        border-right: 1px solid rgba(255,255,255,0.08);
+      /* Primary buttons -> green pill */
+      .stButton > button[kind="primary"]{
+        background: var(--green) !important;
+        color: #0b0f0c !important;
+        border: 1px solid rgba(0,0,0,0.0) !important;
+        border-radius: 999px !important;
+        font-weight: 800 !important;
       }
+      .stButton > button[kind="primary"]:hover{
+        background: var(--green2) !important;
+      }
+
+      /* Normal buttons */
+      .stButton > button{
+        border-radius: 999px !important;
+        border: 1px solid rgba(255,255,255,0.14) !important;
+        background: rgba(255,255,255,0.04) !important;
+        font-weight: 700 !important;
+      }
+      .stButton > button:hover{
+        background: rgba(255,255,255,0.07) !important;
+        border-color: rgba(255,255,255,0.18) !important;
+      }
+
+      /* Tabs */
+      button[data-baseweb="tab"]{
+        border-radius: 999px !important;
+        margin-right: 8px !important;
+        background: rgba(255,255,255,0.04) !important;
+        border: 1px solid rgba(255,255,255,0.10) !important;
+      }
+      button[data-baseweb="tab"][aria-selected="true"]{
+        background: rgba(29,185,84,0.14) !important;
+        border-color: rgba(29,185,84,0.35) !important;
+      }
+
+      /* Captions muted */
+      .stCaption, .stMarkdown p, .stMarkdown span {
+        color: var(--text);
+      }
+      .muted { color: var(--muted); }
+
+      /* Custom pill used by copy button (inside components.html) */
+      .spotify-pill{
+        width:100%;
+        padding:10px 12px;
+        border-radius:999px;
+        border:1px solid rgba(255,255,255,0.14);
+        background: rgba(255,255,255,0.04);
+        color: white;
+        cursor:pointer;
+        font-weight: 800;
+        letter-spacing: 0.01em;
+      }
+      .spotify-pill:hover{
+        background: rgba(255,255,255,0.07);
+        border-color: rgba(255,255,255,0.18);
+      }
+
+      /* Make dividers subtle */
+      hr { border-color: rgba(255,255,255,0.08) !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -173,13 +260,11 @@ st.markdown(
 st_autorefresh(interval=POLL_SECONDS * 1000, key="refresh")
 
 # ---------- Header ----------
-left_h, right_h = st.columns([1, 1])
-with left_h:
+lh, rh = st.columns([1.4, 1])
+with lh:
     st.title(APP_TITLE)
-    st.caption("Save quotes. Copy instantly. Chat with friends.")
-with right_h:
-    st.write("")  # spacer
-    st.write("")  # spacer
+    st.caption("Spotify-ish dark • neon green • clean cards")
+with rh:
     st.caption(f"Auto-refresh: every {POLL_SECONDS}s")
 
 
@@ -194,8 +279,7 @@ with st.sidebar:
     st.divider()
     if st.button("🔄 Refresh now", use_container_width=True):
         clear_cache_and_rerun()
-
-    st.caption("Tip: Use the search box on Quotes to find anything fast.")
+    st.caption("Tip: Use search + sort to find quotes fast.")
 
 
 # ---------- Tabs ----------
@@ -206,21 +290,16 @@ tab_quotes, tab_chat = st.tabs(["📚 Quotes", "💬 Chat"])
 # ================ QUOTES ==================
 # ==========================================
 with tab_quotes:
-    top = st.container(border=True)
-    with top:
+    with st.container(border=True):
         st.subheader("Quotes")
         c1, c2, c3 = st.columns([2.2, 1.2, 1.2])
-
         with c1:
             q_search = st.text_input("Search", placeholder="Search quotes or authors…")
-
         with c2:
             sort_mode = st.selectbox("Sort", ["Newest first", "Oldest first", "Author A–Z"])
-
         with c3:
             show_meta = st.toggle("Show dates", value=True)
 
-    # Add quote card
     with st.container(border=True):
         st.markdown("#### Add a quote")
         with st.form("add_quote", clear_on_submit=True):
@@ -229,10 +308,7 @@ with tab_quotes:
             submitted = st.form_submit_button("Add Quote", use_container_width=True)
 
             if submitted and text.strip():
-                post_data(
-                    "/quotes",
-                    {"text": text.strip(), "author": author.strip(), "created_at": now_iso_z()},
-                )
+                post_data("/quotes", {"text": text.strip(), "author": author.strip(), "created_at": now_iso_z()})
                 st.toast("Quote added ✅")
                 clear_cache_and_rerun()
 
@@ -241,7 +317,6 @@ with tab_quotes:
         with st.container(border=True):
             st.warning("Delete quote?")
             st.write(st.session_state.pending_delete_quote_label)
-
             a, b, _ = st.columns([1, 1, 6])
             with a:
                 if st.button("✅ Confirm delete", type="primary", use_container_width=True):
@@ -260,11 +335,8 @@ with tab_quotes:
     if not quotes:
         st.info("No quotes yet — add one above.")
     else:
-        items = list(quotes.items())
-
-        # Clean + normalize before filtering/sorting
         normalized = []
-        for qid, q in items:
+        for qid, q in quotes.items():
             q_text = clean_quote_text(q.get("text") or "")
             q_author = (q.get("author") or "").strip()
             created_raw = (q.get("created_at") or "").strip()
@@ -273,17 +345,14 @@ with tab_quotes:
         # Filter
         if q_search.strip():
             needle = q_search.strip().lower()
-            normalized = [
-                row for row in normalized
-                if needle in (row[1] or "").lower() or needle in (row[2] or "").lower()
-            ]
+            normalized = [r for r in normalized if needle in (r[1] or "").lower() or needle in (r[2] or "").lower()]
 
         # Sort
         if sort_mode == "Newest first":
             normalized.sort(key=lambda r: r[3] or "", reverse=True)
         elif sort_mode == "Oldest first":
             normalized.sort(key=lambda r: r[3] or "")
-        else:  # Author A–Z
+        else:
             normalized.sort(key=lambda r: (r[2] or "").lower())
 
         st.markdown("#### Your quotes")
@@ -293,17 +362,14 @@ with tab_quotes:
             label = f"“{q_text}”" if q_text else "“(empty)”"
             to_copy = q_text + (f" — {q_author}" if q_author else "")
 
-            row = st.container(border=True)
-            with row:
-                # Content
+            with st.container(border=True):
                 st.markdown(f"### {label}")
                 if q_author:
                     st.caption(f"— {q_author}")
                 if show_meta and created_raw:
                     st.caption(f"Added: {pretty_ts(created_raw)}")
 
-                # Actions
-                a1, a2, a3 = st.columns([1.2, 1.0, 8.0])
+                a1, a2, _ = st.columns([1.2, 1.0, 8.0])
                 with a1:
                     copy_button(to_copy, element_id=f"copy_btn_{qid}", label="Copy")
                 with a2:
@@ -313,8 +379,6 @@ with tab_quotes:
                             f"“{q_text}”" + (f" — {q_author}" if q_author else "")
                         )
                         st.rerun()
-                with a3:
-                    st.write("")  # spacer
 
 
 # ==========================================
@@ -326,7 +390,6 @@ with tab_chat:
     if not st.session_state.username.strip():
         st.warning("Set a username in the sidebar to chat.")
     else:
-        # Messages
         messages = get_data_cached("/chat") or {}
         items = sorted(messages.items(), key=lambda x: (x[1].get("ts") or ""))
 
@@ -343,7 +406,6 @@ with tab_chat:
                     if ts_raw:
                         st.caption(pretty_ts(ts_raw))
 
-        # Composer
         with st.container(border=True):
             st.markdown("#### Send a message")
             with st.form("send_msg", clear_on_submit=True):
@@ -351,9 +413,6 @@ with tab_chat:
                 sent = st.form_submit_button("Send", use_container_width=True)
 
                 if sent and msg.strip():
-                    post_data(
-                        "/chat",
-                        {"user": st.session_state.username.strip(), "text": msg.strip(), "ts": now_iso_z()},
-                    )
+                    post_data("/chat", {"user": st.session_state.username.strip(), "text": msg.strip(), "ts": now_iso_z()})
                     st.toast("Sent ✅")
                     clear_cache_and_rerun()
