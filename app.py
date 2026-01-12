@@ -1,5 +1,7 @@
 import re
 import uuid
+import time
+import html as html_lib
 from datetime import datetime
 
 import requests
@@ -35,10 +37,6 @@ def get_data_cached(path: str):
 
 def post_data(path: str, data: dict):
     requests.post(fb(path), json=data, timeout=8)
-
-
-def patch_data(path: str, data: dict):
-    requests.patch(fb(path), json=data, timeout=8)
 
 
 def put_value(path: str, value):
@@ -110,12 +108,8 @@ def copy_button(text_to_copy: str, element_id: str, label: str = "Copy"):
           background: #1ed760;
           filter: drop-shadow(0 10px 18px rgba(29,185,84,0.18));
         }}
-        .hj-copy:active {{
-          transform: scale(0.97);
-        }}
-        .hj-copy.hj-copied {{
-          animation: hjCopied 350ms ease;
-        }}
+        .hj-copy:active {{ transform: scale(0.97); }}
+        .hj-copy.hj-copied {{ animation: hjCopied 350ms ease; }}
         @keyframes hjCopied {{
           0%   {{ transform: scale(1); }}
           50%  {{ transform: scale(1.03); }}
@@ -138,7 +132,7 @@ def copy_button(text_to_copy: str, element_id: str, label: str = "Copy"):
               const old = btn.innerText;
 
               btn.classList.remove("hj-copied");
-              void btn.offsetWidth; // reflow to retrigger animation
+              void btn.offsetWidth;
               btn.classList.add("hj-copied");
 
               btn.innerText = "✅ Copied";
@@ -184,6 +178,23 @@ if "pending_delete_quote_label" not in st.session_state:
 # Smooth animation: pulse hero after key actions
 if "pulse_hero" not in st.session_state:
     st.session_state.pulse_hero = False
+
+# NEW: last action highlight (fav / collections save / delete)
+if "last_action_qid" not in st.session_state:
+    st.session_state.last_action_qid = None
+if "last_action_ts" not in st.session_state:
+    st.session_state.last_action_ts = 0.0
+
+
+def mark_last_action(qid: str | None):
+    st.session_state.last_action_qid = qid
+    st.session_state.last_action_ts = time.time()
+
+
+def should_flash(qid: str) -> bool:
+    if st.session_state.last_action_qid != qid:
+        return False
+    return (time.time() - float(st.session_state.last_action_ts or 0.0)) <= 1.2
 
 
 # ---------- Page config + Spotify-ish UI ----------
@@ -307,7 +318,6 @@ st.markdown(
       }
       .hj-pulse { animation: hjPulse 320ms ease; }
 
-      /* Animate cards on render */
       [data-testid="stVerticalBlockBorderWrapper"]{
         animation: hjFadeUp 240ms ease-out;
         transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease, border-color 160ms ease;
@@ -318,18 +328,41 @@ st.markdown(
         box-shadow: 0 14px 40px rgba(0,0,0,0.45);
       }
 
-      /* Buttons: soft press */
       .stButton > button{
         transition: transform 120ms ease, background 160ms ease, border-color 160ms ease, filter 160ms ease;
         will-change: transform;
       }
-      .stButton > button:active{
-        transform: scale(0.97);
-      }
+      .stButton > button:active{ transform: scale(0.97); }
 
-      /* Inputs feel smoother */
       .stTextInput input, .stTextArea textarea, .stSelectbox *{
         transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+      }
+
+      /* ===== NEW: green glow highlight for last action ===== */
+      @keyframes hjGlow {
+        0%   { box-shadow: 0 0 0 rgba(29,185,84,0.0); border-color: rgba(255,255,255,0.10); }
+        30%  { box-shadow: 0 0 0 6px rgba(29,185,84,0.10), 0 18px 50px rgba(0,0,0,0.55); border-color: rgba(29,185,84,0.55); }
+        100% { box-shadow: 0 0 0 rgba(29,185,84,0.0); border-color: rgba(255,255,255,0.10); }
+      }
+      .hj-quote-body{
+        border-radius: 14px;
+        border: 1px solid rgba(255,255,255,0.10);
+        background: rgba(255,255,255,0.02);
+        padding: 12px 14px;
+        margin-bottom: 10px;
+      }
+      .hj-quote-body.hj-flash{
+        animation: hjGlow 1050ms ease;
+      }
+      .hj-quote-text{
+        font-size: 1.15rem;
+        font-weight: 800;
+        letter-spacing: -0.01em;
+      }
+      .hj-quote-meta{
+        margin-top: 8px;
+        color: rgba(255,255,255,0.72);
+        font-size: 0.85rem;
       }
     </style>
     """,
@@ -341,7 +374,7 @@ st_autorefresh(interval=POLL_SECONDS * 1000, key="refresh")
 
 # ---------- Data ----------
 quotes = get_data_cached("/quotes") or {}
-collections = get_data_cached("/collections") or {}  # { cid: {name, created_at} }
+collections = get_data_cached("/collections") or {}
 
 collection_name_by_id = {cid: (c.get("name") or "Untitled").strip() for cid, c in collections.items()}
 collection_ids_sorted = sorted(collection_name_by_id.keys(), key=lambda cid: collection_name_by_id[cid].lower())
@@ -390,6 +423,7 @@ with st.sidebar:
         if make and new_name.strip():
             post_data("/collections", {"name": new_name.strip(), "created_at": now_iso_z()})
             st.session_state.pulse_hero = True
+            mark_last_action(None)
             st.toast("Collection created ✅")
             clear_cache_and_rerun()
 
@@ -404,13 +438,13 @@ with st.sidebar:
 
 # ---------- Hero (pulse after actions) ----------
 hero_class = "hj-hero hj-pulse" if st.session_state.pulse_hero else "hj-hero"
-st.session_state.pulse_hero = False  # reset after render
+st.session_state.pulse_hero = False
 
 st.markdown(
     f"""
     <div class="{hero_class}">
       <h1>{APP_TITLE}</h1>
-      <div class="sub">Favourites • Collections • Smooth animations</div>
+      <div class="sub">Favourites • Collections • Smooth animations • Green glow on actions</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -444,11 +478,12 @@ if st.session_state.page == "Quotes":
                         "text": text.strip(),
                         "author": author.strip(),
                         "created_at": now_iso_z(),
-                        "fav_by": {},        # user_id -> true
-                        "collections": {},   # collection_id -> true
+                        "fav_by": {},
+                        "collections": {},
                     },
                 )
                 st.session_state.pulse_hero = True
+                mark_last_action(None)  # new quote id is generated by Firebase; we don't have it here
                 st.toast("Quote added ✅")
                 clear_cache_and_rerun()
 
@@ -461,9 +496,10 @@ if st.session_state.page == "Quotes":
             with a:
                 if st.button("✅ Confirm delete", type="primary", use_container_width=True):
                     delete_data(f"/quotes/{st.session_state.pending_delete_quote_id}")
+                    st.session_state.pulse_hero = True
+                    mark_last_action(None)
                     st.session_state.pending_delete_quote_id = None
                     st.session_state.pending_delete_quote_label = ""
-                    st.session_state.pulse_hero = True
                     st.toast("Deleted 🗑️")
                     clear_cache_and_rerun()
             with b:
@@ -521,19 +557,33 @@ if st.session_state.page == "Quotes":
 
     # Render quotes
     for qid, q_text, q_author, created_raw, is_fav, col_ids in normalized:
-        label = f"“{q_text}”" if q_text else "“(empty)”"
-        to_copy = q_text + (f" — {q_author}" if q_author else "")
+        flash = should_flash(qid)
+
+        safe_quote = html_lib.escape(q_text or "")
+        safe_author = html_lib.escape(q_author or "")
+
+        label_text = f"“{safe_quote}”" if safe_quote else "“(empty)”"
+
+        meta_bits = []
+        if q_author:
+            meta_bits.append(f"— {safe_author}")
+        if show_meta and created_raw:
+            meta_bits.append(f"Added: {html_lib.escape(pretty_ts(created_raw))}")
+        meta_html = " • ".join(meta_bits)
+
+        to_copy = (q_text or "") + (f" — {q_author}" if q_author else "")
 
         with st.container(border=True):
-            st.markdown(f"### {label}")
-
-            meta = []
-            if q_author:
-                meta.append(f"— {q_author}")
-            if show_meta and created_raw:
-                meta.append(f"Added: {pretty_ts(created_raw)}")
-            if meta:
-                st.caption(" • ".join(meta))
+            # This block is what glows (we keep it self-contained HTML to apply class safely)
+            st.markdown(
+                f"""
+                <div class="hj-quote-body {'hj-flash' if flash else ''}">
+                  <div class="hj-quote-text">{label_text}</div>
+                  {"<div class='hj-quote-meta'>" + meta_html + "</div>" if meta_html else ""}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
             # Actions row
             a1, a2, a3, a4, _ = st.columns([1.2, 0.95, 1.6, 1.0, 6.0])
@@ -549,6 +599,7 @@ if st.session_state.page == "Quotes":
                     else:
                         put_value(f"/quotes/{qid}/fav_by/{uid}", True)
                     st.session_state.pulse_hero = True
+                    mark_last_action(qid)
                     clear_cache_and_rerun()
 
             with a3:
@@ -576,6 +627,7 @@ if st.session_state.page == "Quotes":
                             delete_data(f"/quotes/{qid}/collections/{cid}")
 
                         st.session_state.pulse_hero = True
+                        mark_last_action(qid)
                         st.toast("Collections updated ✅")
                         clear_cache_and_rerun()
 
@@ -610,7 +662,7 @@ if st.session_state.page == "Chat":
                 ts_raw = (m.get("ts") or "").strip()
 
                 with st.container(border=True):
-                    st.markdown(f"**{user}:** {text}")
+                    st.markdown(f"**{html_lib.escape(user)}:** {html_lib.escape(text)}")
                     if ts_raw:
                         st.caption(pretty_ts(ts_raw))
 
@@ -623,5 +675,6 @@ if st.session_state.page == "Chat":
                 if sent and msg.strip():
                     post_data("/chat", {"user": st.session_state.username.strip(), "text": msg.strip(), "ts": now_iso_z()})
                     st.session_state.pulse_hero = True
+                    mark_last_action(None)
                     st.toast("Sent ✅")
                     clear_cache_and_rerun()
