@@ -129,7 +129,7 @@ if st.session_state.page == "Chat":
                     "text": msg.strip(),
                     "ts": now()
                 })
-                st.experimental_rerun()
+                st.rerun()
 
 # ---------- Auto refresh ----------
 time.sleep(POLL_SECONDS)
