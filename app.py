@@ -63,52 +63,73 @@ _MUTED_ADDED_DIV_RE = re.compile(
     r'<div\s+class=(["\'])muted\1>\s*Added:\s*.*?</div>',
     flags=re.IGNORECASE | re.DOTALL,
 )
-
 _ANY_HTML_TAG_RE = re.compile(r"</?[^>]+>")
 
 def clean_quote_text(text: str) -> str:
     """
-    Removes the accidentally-saved 'Added: ...' div and (only if HTML is present)
-    strips remaining HTML tags so old polluted quotes display normally.
+    Removes accidentally-saved 'Added: ...' div and strips remaining tags
+    only when it looks like HTML got saved into the quote text.
     """
     if not text:
         return ""
 
     s = text.strip()
+    s = _MUTED_ADDED_DIV_RE.sub("", s).strip()
 
-    # Remove the specific polluted chunk
-    s2 = _MUTED_ADDED_DIV_RE.sub("", s).strip()
+    # If it still looks like HTML, strip tags
+    lower = s.lower()
+    if "<div" in lower or "</div" in lower or "<span" in lower or "<br" in lower or "<p" in lower:
+        s = _ANY_HTML_TAG_RE.sub("", s)
+        s = re.sub(r"\s{2,}", " ", s).strip()
 
-    # If it still looks like HTML got saved, strip any remaining tags
-    if "<div" in s2.lower() or "</div" in s2.lower() or "<span" in s2.lower() or "<br" in s2.lower():
-        s2 = _ANY_HTML_TAG_RE.sub("", s2)
-        s2 = re.sub(r"\s{2,}", " ", s2).strip()
-
-    return s2
+    return s
 
 
-# ---------- Copy button ----------
-def copy_button(text_to_copy: str, key: str, label: str = "📋 Copy"):
-    # Escape for safe JS string
-    safe = (text_to_copy or "").replace("\\", "\\\\").replace('"', '\\"')
+# ---------- Copy button (no key= on components.html) ----------
+def copy_button(text_to_copy: str, element_id: str, label: str = "📋 Copy"):
+    # Escape for JS string
+    safe = (text_to_copy or "").replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
     html = f"""
-    <button
-      style="
-        width:100%;
-        padding:7px 10px;
-        border-radius:10px;
-        border:1px solid #374151;
-        background:#111827;
-        color:white;
-        cursor:pointer;
-      "
-      onclick='navigator.clipboard.writeText("{safe}")'
-      title="Copy to clipboard"
-    >
-      {label}
-    </button>
+    <div>
+      <button id="{element_id}" style="
+          width:100%;
+          padding:7px 10px;
+          border-radius:10px;
+          border:1px solid #374151;
+          background:#111827;
+          color:white;
+          cursor:pointer;
+      " title="Copy to clipboard">
+        {label}
+      </button>
+
+      <script>
+        (function() {{
+          const btn = document.getElementById("{element_id}");
+          if (!btn) return;
+
+          // Prevent double-binding if Streamlit re-renders
+          if (btn.dataset.bound === "1") return;
+          btn.dataset.bound = "1";
+
+          btn.addEventListener("click", async () => {{
+            try {{
+              await navigator.clipboard.writeText("{safe}");
+              const old = btn.innerText;
+              btn.innerText = "✅ Copied";
+              setTimeout(() => btn.innerText = old, 900);
+            }} catch (e) {{
+              const old = btn.innerText;
+              btn.innerText = "❌ Failed";
+              setTimeout(() => btn.innerText = old, 900);
+            }}
+          }});
+        }})();
+      </script>
+    </div>
     """
-    components.html(html, height=46, key=key)
+    components.html(html, height=52)  # <- no key parameter
 
 
 # ---------- Session ----------
@@ -193,11 +214,7 @@ if st.session_state.page == "Quotes":
         if submitted and text.strip():
             post_data(
                 "/quotes",
-                {
-                    "text": text.strip(),
-                    "author": author.strip(),
-                    "created_at": now_iso_z(),
-                },
+                {"text": text.strip(), "author": author.strip(), "created_at": now_iso_z()},
             )
             clear_cache_and_rerun()
 
@@ -225,7 +242,6 @@ if st.session_state.page == "Quotes":
     if not quotes:
         st.info("No quotes yet — add one above.")
     else:
-        # Newest first
         items = sorted(
             quotes.items(),
             key=lambda x: (x[1].get("created_at") or ""),
@@ -233,18 +249,15 @@ if st.session_state.page == "Quotes":
         )
 
         for qid, q in items:
-            q_text_raw = q.get("text") or ""
-            q_text = clean_quote_text(q_text_raw)
+            q_text = clean_quote_text(q.get("text") or "")
             q_author = (q.get("author") or "").strip()
             created_raw = (q.get("created_at") or "").strip()
 
             label = f"“{q_text}”" if q_text else "“(empty)”"
-
             author_html = f'<div class="quote-author">— {q_author}</div>' if q_author else ""
             created_html = f'<div class="muted">Added: {pretty_ts(created_raw)}</div>' if created_raw else ""
 
-            # quote | copy | delete
-            left, cpy, delc = st.columns([8, 1.2, 0.8], vertical_alignment="top")
+            left, cpy, delc = st.columns([8, 1.3, 0.7], vertical_alignment="top")
 
             with left:
                 st.markdown(
@@ -260,7 +273,7 @@ if st.session_state.page == "Quotes":
 
             with cpy:
                 to_copy = q_text + (f" — {q_author}" if q_author else "")
-                copy_button(to_copy, key=f"copy_{qid}", label="📋 Copy")
+                copy_button(to_copy, element_id=f"copy_btn_{qid}", label="📋 Copy")
 
             with delc:
                 if st.button("🗑", key=f"ask_del_{qid}", help="Delete"):
@@ -281,8 +294,6 @@ if st.session_state.page == "Chat":
         st.warning("Set a username in the sidebar to chat.")
     else:
         messages = get_data_cached("/chat") or {}
-
-        # Oldest -> newest
         items = sorted(messages.items(), key=lambda x: (x[1].get("ts") or ""))
 
         if not items:
@@ -292,7 +303,6 @@ if st.session_state.page == "Chat":
                 user = (m.get("user") or "").strip()
                 text = (m.get("text") or "").strip()
                 ts_raw = (m.get("ts") or "").strip()
-
                 ts_html = f'<span class="muted">{pretty_ts(ts_raw)}</span>' if ts_raw else ""
 
                 st.markdown(
@@ -312,10 +322,6 @@ if st.session_state.page == "Chat":
             if sent and msg.strip():
                 post_data(
                     "/chat",
-                    {
-                        "user": st.session_state.username.strip(),
-                        "text": msg.strip(),
-                        "ts": now_iso_z(),
-                    },
+                    {"user": st.session_state.username.strip(), "text": msg.strip(), "ts": now_iso_z()},
                 )
                 clear_cache_and_rerun()
