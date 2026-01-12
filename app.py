@@ -1,7 +1,10 @@
-import streamlit as st
-import requests
+import re
 import uuid
 from datetime import datetime
+
+import requests
+import streamlit as st
+import streamlit.components.v1 as components
 from streamlit_autorefresh import st_autorefresh
 
 # ================= CONFIG =================
@@ -55,6 +58,59 @@ def clear_cache_and_rerun():
     st.rerun()
 
 
+# ---------- Fix for old “HTML got saved into quote text” ----------
+_MUTED_ADDED_DIV_RE = re.compile(
+    r'<div\s+class=(["\'])muted\1>\s*Added:\s*.*?</div>',
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+_ANY_HTML_TAG_RE = re.compile(r"</?[^>]+>")
+
+def clean_quote_text(text: str) -> str:
+    """
+    Removes the accidentally-saved 'Added: ...' div and (only if HTML is present)
+    strips remaining HTML tags so old polluted quotes display normally.
+    """
+    if not text:
+        return ""
+
+    s = text.strip()
+
+    # Remove the specific polluted chunk
+    s2 = _MUTED_ADDED_DIV_RE.sub("", s).strip()
+
+    # If it still looks like HTML got saved, strip any remaining tags
+    if "<div" in s2.lower() or "</div" in s2.lower() or "<span" in s2.lower() or "<br" in s2.lower():
+        s2 = _ANY_HTML_TAG_RE.sub("", s2)
+        s2 = re.sub(r"\s{2,}", " ", s2).strip()
+
+    return s2
+
+
+# ---------- Copy button ----------
+def copy_button(text_to_copy: str, key: str, label: str = "📋 Copy"):
+    # Escape for safe JS string
+    safe = (text_to_copy or "").replace("\\", "\\\\").replace('"', '\\"')
+    html = f"""
+    <button
+      style="
+        width:100%;
+        padding:7px 10px;
+        border-radius:10px;
+        border:1px solid #374151;
+        background:#111827;
+        color:white;
+        cursor:pointer;
+      "
+      onclick='navigator.clipboard.writeText("{safe}")'
+      title="Copy to clipboard"
+    >
+      {label}
+    </button>
+    """
+    components.html(html, height=46, key=key)
+
+
 # ---------- Session ----------
 if "user_id" not in st.session_state:
     st.session_state.user_id = str(uuid.uuid4())
@@ -103,9 +159,8 @@ st.markdown(
 
 st.title(APP_TITLE)
 
-# ---------- Auto refresh (Option A) ----------
+# ---------- Auto refresh ----------
 st_autorefresh(interval=POLL_SECONDS * 1000, key="refresh")
-
 
 # ---------- Sidebar ----------
 with st.sidebar:
@@ -178,18 +233,19 @@ if st.session_state.page == "Quotes":
         )
 
         for qid, q in items:
-            q_text = (q.get("text") or "").strip()
+            q_text_raw = q.get("text") or ""
+            q_text = clean_quote_text(q_text_raw)
             q_author = (q.get("author") or "").strip()
             created_raw = (q.get("created_at") or "").strip()
 
             label = f"“{q_text}”" if q_text else "“(empty)”"
 
             author_html = f'<div class="quote-author">— {q_author}</div>' if q_author else ""
-            created_html = (
-                f'<div class="muted">Added: {pretty_ts(created_raw)}</div>' if created_raw else ""
-            )
+            created_html = f'<div class="muted">Added: {pretty_ts(created_raw)}</div>' if created_raw else ""
 
-            left, right = st.columns([9, 1], vertical_alignment="top")
+            # quote | copy | delete
+            left, cpy, delc = st.columns([8, 1.2, 0.8], vertical_alignment="top")
+
             with left:
                 st.markdown(
                     f"""
@@ -201,11 +257,16 @@ if st.session_state.page == "Quotes":
                     """,
                     unsafe_allow_html=True,
                 )
-            with right:
+
+            with cpy:
+                to_copy = q_text + (f" — {q_author}" if q_author else "")
+                copy_button(to_copy, key=f"copy_{qid}", label="📋 Copy")
+
+            with delc:
                 if st.button("🗑", key=f"ask_del_{qid}", help="Delete"):
                     st.session_state.pending_delete_quote_id = qid
                     st.session_state.pending_delete_quote_label = (
-                        label + (f" — {q_author}" if q_author else "")
+                        f"“{q_text}”" + (f" — {q_author}" if q_author else "")
                     )
                     st.rerun()
 
@@ -221,7 +282,7 @@ if st.session_state.page == "Chat":
     else:
         messages = get_data_cached("/chat") or {}
 
-        # Oldest -> newest (classic chat)
+        # Oldest -> newest
         items = sorted(messages.items(), key=lambda x: (x[1].get("ts") or ""))
 
         if not items:
