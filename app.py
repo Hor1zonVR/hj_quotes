@@ -37,6 +37,15 @@ def post_data(path: str, data: dict):
     requests.post(fb(path), json=data, timeout=8)
 
 
+def patch_data(path: str, data: dict):
+    requests.patch(fb(path), json=data, timeout=8)
+
+
+def put_value(path: str, value):
+    # Writes a value at an exact path
+    requests.put(fb(path), json=value, timeout=8)
+
+
 def delete_data(path: str):
     requests.delete(fb(path), timeout=8)
 
@@ -79,7 +88,7 @@ def clean_quote_text(text: str) -> str:
     return s
 
 
-# ---------- Copy button (fully self-styled so it never turns white) ----------
+# ---------- Copy button (self-styled) ----------
 def copy_button(text_to_copy: str, element_id: str, label: str = "Copy"):
     safe = (text_to_copy or "").replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
     html = f"""
@@ -137,8 +146,15 @@ if "username" not in st.session_state:
     st.session_state.username = ""
 
 if "page" not in st.session_state:
-    st.session_state.page = "Quotes"
+    st.session_state.page = "Quotes"  # Quotes / Chat
 
+if "view_mode" not in st.session_state:
+    st.session_state.view_mode = "ALL"  # ALL / FAV / COL
+
+if "selected_collection_id" not in st.session_state:
+    st.session_state.selected_collection_id = None
+
+# Delete confirmation state
 if "pending_delete_quote_id" not in st.session_state:
     st.session_state.pending_delete_quote_id = None
 
@@ -146,7 +162,7 @@ if "pending_delete_quote_label" not in st.session_state:
     st.session_state.pending_delete_quote_label = ""
 
 
-# ---------- Page config + Spotify-ish UI ----------
+# ---------- Spotify-ish UI ----------
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
 st.markdown(
@@ -156,7 +172,6 @@ st.markdown(
         --bg0:#0b0f0c;
         --bg1:#121212;
         --bg2:#181818;
-        --stroke:rgba(255,255,255,0.10);
         --text:#ffffff;
         --muted:#b3b3b3;
         --green:#1DB954;
@@ -171,18 +186,13 @@ st.markdown(
         color: var(--text);
       }
 
-      .block-container {
-        padding-top: 1.0rem;
-        padding-bottom: 2.2rem;
-      }
+      .block-container { padding-top: 1.0rem; padding-bottom: 2.2rem; }
 
-      /* Sidebar “left rail” look */
       section[data-testid="stSidebar"]{
         background: linear-gradient(180deg, rgba(18,18,18,0.98), rgba(12,12,12,0.98));
         border-right: 1px solid rgba(255,255,255,0.06);
       }
 
-      /* Hero header card */
       .hj-hero {
         border-radius: 18px;
         padding: 18px 18px;
@@ -196,7 +206,6 @@ st.markdown(
       .hj-hero h1 { margin: 0; letter-spacing: -0.03em; }
       .hj-hero .sub { color: var(--muted); margin-top: 6px; }
 
-      /* Streamlit bordered containers -> Spotify cards */
       [data-testid="stVerticalBlockBorderWrapper"]{
         border-radius: 16px !important;
         border: 1px solid rgba(255,255,255,0.08) !important;
@@ -208,7 +217,6 @@ st.markdown(
         border-color: rgba(255,255,255,0.10) !important;
       }
 
-      /* Inputs */
       .stTextInput input, .stTextArea textarea {
         border-radius: 14px !important;
         border: 1px solid rgba(255,255,255,0.12) !important;
@@ -220,7 +228,6 @@ st.markdown(
         background: rgba(18,18,18,0.92) !important;
       }
 
-      /* Primary buttons -> Spotify green pill */
       .stButton > button[kind="primary"]{
         background: var(--green) !important;
         color: #0b0f0c !important;
@@ -232,7 +239,6 @@ st.markdown(
         background: var(--green2) !important;
       }
 
-      /* Regular buttons */
       .stButton > button{
         border-radius: 999px !important;
         border: 1px solid rgba(255,255,255,0.14) !important;
@@ -244,27 +250,23 @@ st.markdown(
         border-color: rgba(255,255,255,0.18) !important;
       }
 
-      /* Make radio nav bigger + remove weird red text by forcing colors */
       section[data-testid="stSidebar"] label, section[data-testid="stSidebar"] p, section[data-testid="stSidebar"] span{
         color: var(--text) !important;
       }
 
-      /* Radio options padding / pill feel */
       section[data-testid="stSidebar"] div[role="radiogroup"] > label{
         border: 1px solid rgba(255,255,255,0.10);
         background: rgba(255,255,255,0.03);
-        border-radius: 14px;
-        padding: 10px 12px;
+        border-radius: 16px;
+        padding: 12px 12px;
         margin: 8px 0;
       }
 
-      /* “Selected” styling (best-effort; Streamlit DOM can vary slightly) */
       section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked){
         border-color: rgba(29,185,84,0.45) !important;
         background: rgba(29,185,84,0.16) !important;
       }
 
-      /* Dividers subtle */
       hr { border-color: rgba(255,255,255,0.08) !important; }
     </style>
     """,
@@ -274,9 +276,21 @@ st.markdown(
 # ---------- Refresh ----------
 st_autorefresh(interval=POLL_SECONDS * 1000, key="refresh")
 
-# ---------- Sidebar “left rail” navigation ----------
+
+# ---------- Data ----------
+quotes = get_data_cached("/quotes") or {}
+collections = get_data_cached("/collections") or {}  # { cid: {name, created_at} }
+
+# Normalize collections (id -> name)
+collection_name_by_id = {
+    cid: (c.get("name") or "Untitled").strip() for cid, c in collections.items()
+}
+collection_ids_sorted = sorted(collection_name_by_id.keys(), key=lambda cid: collection_name_by_id[cid].lower())
+
+# ---------- Sidebar: left rail ----------
 with st.sidebar:
     st.markdown("### Navigation")
+
     st.session_state.page = st.radio(
         label="",
         options=["Quotes", "Chat"],
@@ -286,30 +300,63 @@ with st.sidebar:
     )
 
     st.divider()
-    st.markdown("### Settings")
-    st.session_state.username = st.text_input(
-        "Username",
-        value=st.session_state.username,
-        placeholder="Enter your name",
+
+    st.markdown("### Library")
+    # View mode only matters on Quotes page; we still keep state.
+    view_options = ["All Quotes", "❤️ Favourites"] + [f"📁 {collection_name_by_id[cid]}" for cid in collection_ids_sorted]
+    view_choice = st.radio(
+        label="",
+        options=view_options,
+        index=0,
+        label_visibility="collapsed",
     )
 
-    c_a, c_b = st.columns(2)
-    with c_a:
-        if st.button("🔄 Refresh", use_container_width=True):
-            clear_cache_and_rerun()
-    with c_b:
-        st.caption(f"{POLL_SECONDS}s poll")
+    # Map view selection to state
+    if view_choice == "All Quotes":
+        st.session_state.view_mode = "ALL"
+        st.session_state.selected_collection_id = None
+    elif view_choice == "❤️ Favourites":
+        st.session_state.view_mode = "FAV"
+        st.session_state.selected_collection_id = None
+    else:
+        # collection selected
+        st.session_state.view_mode = "COL"
+        # find cid by label
+        selected_name = view_choice.replace("📁 ", "", 1)
+        # pick matching id
+        matched = None
+        for cid, nm in collection_name_by_id.items():
+            if nm == selected_name:
+                matched = cid
+                break
+        st.session_state.selected_collection_id = matched
 
     st.divider()
-    st.caption("Tip: Search + sort on Quotes like a playlist.")
+
+    st.markdown("### Create collection")
+    with st.form("create_collection", clear_on_submit=True):
+        new_name = st.text_input("Name", placeholder="e.g. Stoicism", label_visibility="collapsed")
+        make = st.form_submit_button("Create", use_container_width=True)
+        if make and new_name.strip():
+            post_data("/collections", {"name": new_name.strip(), "created_at": now_iso_z()})
+            st.toast("Collection created ✅")
+            clear_cache_and_rerun()
+
+    st.divider()
+
+    st.markdown("### Settings")
+    st.session_state.username = st.text_input("Username", value=st.session_state.username, placeholder="Enter your name")
+    if st.button("🔄 Refresh", use_container_width=True):
+        clear_cache_and_rerun()
+    st.caption(f"Polling every {POLL_SECONDS}s")
 
 
-# ---------- Hero header ----------
+# ---------- Hero ----------
 st.markdown(
     f"""
     <div class="hj-hero">
       <h1>{APP_TITLE}</h1>
-      <div class="sub">Spotify-ish layout • left rail • playlist-style cards • copy in one tap</div>
+      <div class="sub">Favourites • Collections • Playlist-style layout</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -337,7 +384,16 @@ if st.session_state.page == "Quotes":
             submitted = st.form_submit_button("Add Quote", use_container_width=True)
 
             if submitted and text.strip():
-                post_data("/quotes", {"text": text.strip(), "author": author.strip(), "created_at": now_iso_z()})
+                post_data(
+                    "/quotes",
+                    {
+                        "text": text.strip(),
+                        "author": author.strip(),
+                        "created_at": now_iso_z(),
+                        "fav_by": {},        # user_id -> true
+                        "collections": {},   # collection_id -> true
+                    },
+                )
                 st.toast("Quote added ✅")
                 clear_cache_and_rerun()
 
@@ -360,23 +416,37 @@ if st.session_state.page == "Quotes":
                     st.session_state.pending_delete_quote_label = ""
                     st.rerun()
 
-    quotes = get_data_cached("/quotes") or {}
-    if not quotes:
-        st.info("No quotes yet — add one above.")
-    else:
-        normalized = []
-        for qid, q in quotes.items():
-            q_text = clean_quote_text(q.get("text") or "")
-            q_author = (q.get("author") or "").strip()
-            created_raw = (q.get("created_at") or "").strip()
-            normalized.append((qid, q_text, q_author, created_raw))
+    # Normalize quotes
+    uid = st.session_state.user_id
+    normalized = []
+    for qid, q in quotes.items():
+        q_text = clean_quote_text(q.get("text") or "")
+        q_author = (q.get("author") or "").strip()
+        created_raw = (q.get("created_at") or "").strip()
 
-        # Filter
-        if q_search.strip():
-            needle = q_search.strip().lower()
-            normalized = [r for r in normalized if needle in (r[1] or "").lower() or needle in (r[2] or "").lower()]
+        fav_by = q.get("fav_by") or {}
+        is_fav = bool(fav_by.get(uid))
 
-        # Sort
+        q_cols = q.get("collections") or {}  # cid -> true
+        col_ids = [cid for cid, v in q_cols.items() if v]
+
+        normalized.append((qid, q_text, q_author, created_raw, is_fav, col_ids))
+
+    # Filter by view
+    if st.session_state.view_mode == "FAV":
+        normalized = [r for r in normalized if r[4] is True]
+
+    if st.session_state.view_mode == "COL" and st.session_state.selected_collection_id:
+        wanted = st.session_state.selected_collection_id
+        normalized = [r for r in normalized if wanted in set(r[5])]
+
+    # Search
+    if "q_search" in locals() and q_search.strip():
+        needle = q_search.strip().lower()
+        normalized = [r for r in normalized if needle in (r[1] or "").lower() or needle in (r[2] or "").lower()]
+
+    # Sort
+    if "sort_mode" in locals():
         if sort_mode == "Newest first":
             normalized.sort(key=lambda r: r[3] or "", reverse=True)
         elif sort_mode == "Oldest first":
@@ -384,34 +454,83 @@ if st.session_state.page == "Quotes":
         else:
             normalized.sort(key=lambda r: (r[2] or "").lower())
 
-        st.markdown("#### Your quotes")
+    # Title
+    with st.container(border=True):
+        title = "All Quotes"
+        if st.session_state.view_mode == "FAV":
+            title = "❤️ Favourites"
+        if st.session_state.view_mode == "COL" and st.session_state.selected_collection_id:
+            title = f"📁 {collection_name_by_id.get(st.session_state.selected_collection_id, 'Collection')}"
+        st.markdown(f"#### {title}")
         st.caption(f"{len(normalized)} shown")
 
-        # Playlist-style list (card per item, tight)
-        for qid, q_text, q_author, created_raw in normalized:
-            label = f"“{q_text}”" if q_text else "“(empty)”"
-            to_copy = q_text + (f" — {q_author}" if q_author else "")
+    # Render list
+    for qid, q_text, q_author, created_raw, is_fav, col_ids in normalized:
+        label = f"“{q_text}”" if q_text else "“(empty)”"
+        to_copy = q_text + (f" — {q_author}" if q_author else "")
 
-            with st.container(border=True):
-                st.markdown(f"### {label}")
-                meta_line = []
-                if q_author:
-                    meta_line.append(f"— {q_author}")
-                if show_meta and created_raw:
-                    meta_line.append(f"Added: {pretty_ts(created_raw)}")
-                if meta_line:
-                    st.caption(" • ".join(meta_line))
+        with st.container(border=True):
+            st.markdown(f"### {label}")
 
-                a1, a2, _ = st.columns([1.2, 1.0, 8.0])
-                with a1:
-                    copy_button(to_copy, element_id=f"copy_btn_{qid}", label="Copy")
-                with a2:
-                    if st.button("🗑 Delete", key=f"ask_del_{qid}", use_container_width=True):
-                        st.session_state.pending_delete_quote_id = qid
-                        st.session_state.pending_delete_quote_label = (
-                            f"“{q_text}”" + (f" — {q_author}" if q_author else "")
-                        )
-                        st.rerun()
+            meta = []
+            if q_author:
+                meta.append(f"— {q_author}")
+            if show_meta and created_raw:
+                meta.append(f"Added: {pretty_ts(created_raw)}")
+            if meta:
+                st.caption(" • ".join(meta))
+
+            # Actions row
+            a1, a2, a3, a4, _ = st.columns([1.2, 0.95, 1.6, 1.0, 6.0])
+
+            with a1:
+                copy_button(to_copy, element_id=f"copy_btn_{qid}", label="Copy")
+
+            with a2:
+                fav_label = "💚 Fav" if not is_fav else "✅ Faved"
+                if st.button(fav_label, key=f"fav_{qid}", use_container_width=True):
+                    if is_fav:
+                        delete_data(f"/quotes/{qid}/fav_by/{uid}")
+                    else:
+                        put_value(f"/quotes/{qid}/fav_by/{uid}", True)
+                    clear_cache_and_rerun()
+
+            with a3:
+                # Collections editor in an expander for clean UI
+                with st.expander("📁 Collections", expanded=False):
+                    name_to_id = {v: k for k, v in collection_name_by_id.items()}
+                    all_names = [collection_name_by_id[cid] for cid in collection_ids_sorted]
+                    current_names = [collection_name_by_id[cid] for cid in col_ids if cid in collection_name_by_id]
+
+                    selected = st.multiselect(
+                        "Add to collections",
+                        options=all_names,
+                        default=current_names,
+                        key=f"ms_{qid}",
+                    )
+                    if st.button("Save collections", key=f"save_cols_{qid}", type="primary", use_container_width=True):
+                        desired_ids = set(name_to_id[n] for n in selected if n in name_to_id)
+                        current_ids = set(col_ids)
+
+                        to_add = desired_ids - current_ids
+                        to_remove = current_ids - desired_ids
+
+                        # Update quote -> collections
+                        for cid in to_add:
+                            put_value(f"/quotes/{qid}/collections/{cid}", True)
+                        for cid in to_remove:
+                            delete_data(f"/quotes/{qid}/collections/{cid}")
+
+                        st.toast("Collections updated ✅")
+                        clear_cache_and_rerun()
+
+            with a4:
+                if st.button("🗑 Delete", key=f"ask_del_{qid}", use_container_width=True):
+                    st.session_state.pending_delete_quote_id = qid
+                    st.session_state.pending_delete_quote_label = (
+                        f"“{q_text}”" + (f" — {q_author}" if q_author else "")
+                    )
+                    st.rerun()
 
 
 # ==========================================
@@ -447,6 +566,9 @@ if st.session_state.page == "Chat":
                 sent = st.form_submit_button("Send", use_container_width=True)
 
                 if sent and msg.strip():
-                    post_data("/chat", {"user": st.session_state.username.strip(), "text": msg.strip(), "ts": now_iso_z()})
+                    post_data(
+                        "/chat",
+                        {"user": st.session_state.username.strip(), "text": msg.strip(), "ts": now_iso_z()},
+                    )
                     st.toast("Sent ✅")
                     clear_cache_and_rerun()
