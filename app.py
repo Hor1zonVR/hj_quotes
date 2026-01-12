@@ -42,7 +42,6 @@ def patch_data(path: str, data: dict):
 
 
 def put_value(path: str, value):
-    # Writes a value at an exact path
     requests.put(fb(path), json=value, timeout=8)
 
 
@@ -88,7 +87,7 @@ def clean_quote_text(text: str) -> str:
     return s
 
 
-# ---------- Copy button (self-styled) ----------
+# ---------- Copy button (animated + Spotify green, self-styled) ----------
 def copy_button(text_to_copy: str, element_id: str, label: str = "Copy"):
     safe = (text_to_copy or "").replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
     html = f"""
@@ -104,9 +103,23 @@ def copy_button(text_to_copy: str, element_id: str, label: str = "Copy"):
           cursor: pointer;
           font-weight: 900;
           letter-spacing: 0.01em;
+          transition: transform 120ms ease, filter 160ms ease, background 160ms ease;
+          will-change: transform;
         }}
         .hj-copy:hover {{
           background: #1ed760;
+          filter: drop-shadow(0 10px 18px rgba(29,185,84,0.18));
+        }}
+        .hj-copy:active {{
+          transform: scale(0.97);
+        }}
+        .hj-copy.hj-copied {{
+          animation: hjCopied 350ms ease;
+        }}
+        @keyframes hjCopied {{
+          0%   {{ transform: scale(1); }}
+          50%  {{ transform: scale(1.03); }}
+          100% {{ transform: scale(1); }}
         }}
       </style>
 
@@ -123,8 +136,16 @@ def copy_button(text_to_copy: str, element_id: str, label: str = "Copy"):
             try {{
               await navigator.clipboard.writeText("{safe}");
               const old = btn.innerText;
+
+              btn.classList.remove("hj-copied");
+              void btn.offsetWidth; // reflow to retrigger animation
+              btn.classList.add("hj-copied");
+
               btn.innerText = "✅ Copied";
-              setTimeout(() => btn.innerText = old, 900);
+              setTimeout(() => {{
+                btn.innerText = old;
+                btn.classList.remove("hj-copied");
+              }}, 900);
             }} catch (e) {{
               const old = btn.innerText;
               btn.innerText = "❌ Failed";
@@ -154,15 +175,18 @@ if "view_mode" not in st.session_state:
 if "selected_collection_id" not in st.session_state:
     st.session_state.selected_collection_id = None
 
-# Delete confirmation state
 if "pending_delete_quote_id" not in st.session_state:
     st.session_state.pending_delete_quote_id = None
 
 if "pending_delete_quote_label" not in st.session_state:
     st.session_state.pending_delete_quote_label = ""
 
+# Smooth animation: pulse hero after key actions
+if "pulse_hero" not in st.session_state:
+    st.session_state.pulse_hero = False
 
-# ---------- Spotify-ish UI ----------
+
+# ---------- Page config + Spotify-ish UI ----------
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
 st.markdown(
@@ -250,7 +274,9 @@ st.markdown(
         border-color: rgba(255,255,255,0.18) !important;
       }
 
-      section[data-testid="stSidebar"] label, section[data-testid="stSidebar"] p, section[data-testid="stSidebar"] span{
+      section[data-testid="stSidebar"] label,
+      section[data-testid="stSidebar"] p,
+      section[data-testid="stSidebar"] span{
         color: var(--text) !important;
       }
 
@@ -268,6 +294,43 @@ st.markdown(
       }
 
       hr { border-color: rgba(255,255,255,0.08) !important; }
+
+      /* ===== Smooth animations ===== */
+      @keyframes hjFadeUp {
+        from { opacity: 0; transform: translateY(8px); }
+        to   { opacity: 1; transform: translateY(0px); }
+      }
+      @keyframes hjPulse {
+        0%   { transform: scale(1); }
+        50%  { transform: scale(1.03); }
+        100% { transform: scale(1); }
+      }
+      .hj-pulse { animation: hjPulse 320ms ease; }
+
+      /* Animate cards on render */
+      [data-testid="stVerticalBlockBorderWrapper"]{
+        animation: hjFadeUp 240ms ease-out;
+        transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease, border-color 160ms ease;
+        will-change: transform;
+      }
+      [data-testid="stVerticalBlockBorderWrapper"]:hover{
+        transform: translateY(-2px);
+        box-shadow: 0 14px 40px rgba(0,0,0,0.45);
+      }
+
+      /* Buttons: soft press */
+      .stButton > button{
+        transition: transform 120ms ease, background 160ms ease, border-color 160ms ease, filter 160ms ease;
+        will-change: transform;
+      }
+      .stButton > button:active{
+        transform: scale(0.97);
+      }
+
+      /* Inputs feel smoother */
+      .stTextInput input, .stTextArea textarea, .stSelectbox *{
+        transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -276,16 +339,13 @@ st.markdown(
 # ---------- Refresh ----------
 st_autorefresh(interval=POLL_SECONDS * 1000, key="refresh")
 
-
 # ---------- Data ----------
 quotes = get_data_cached("/quotes") or {}
 collections = get_data_cached("/collections") or {}  # { cid: {name, created_at} }
 
-# Normalize collections (id -> name)
-collection_name_by_id = {
-    cid: (c.get("name") or "Untitled").strip() for cid, c in collections.items()
-}
+collection_name_by_id = {cid: (c.get("name") or "Untitled").strip() for cid, c in collections.items()}
 collection_ids_sorted = sorted(collection_name_by_id.keys(), key=lambda cid: collection_name_by_id[cid].lower())
+
 
 # ---------- Sidebar: left rail ----------
 with st.sidebar:
@@ -302,16 +362,9 @@ with st.sidebar:
     st.divider()
 
     st.markdown("### Library")
-    # View mode only matters on Quotes page; we still keep state.
     view_options = ["All Quotes", "❤️ Favourites"] + [f"📁 {collection_name_by_id[cid]}" for cid in collection_ids_sorted]
-    view_choice = st.radio(
-        label="",
-        options=view_options,
-        index=0,
-        label_visibility="collapsed",
-    )
+    view_choice = st.radio(label="", options=view_options, index=0, label_visibility="collapsed")
 
-    # Map view selection to state
     if view_choice == "All Quotes":
         st.session_state.view_mode = "ALL"
         st.session_state.selected_collection_id = None
@@ -319,11 +372,8 @@ with st.sidebar:
         st.session_state.view_mode = "FAV"
         st.session_state.selected_collection_id = None
     else:
-        # collection selected
         st.session_state.view_mode = "COL"
-        # find cid by label
         selected_name = view_choice.replace("📁 ", "", 1)
-        # pick matching id
         matched = None
         for cid, nm in collection_name_by_id.items():
             if nm == selected_name:
@@ -339,6 +389,7 @@ with st.sidebar:
         make = st.form_submit_button("Create", use_container_width=True)
         if make and new_name.strip():
             post_data("/collections", {"name": new_name.strip(), "created_at": now_iso_z()})
+            st.session_state.pulse_hero = True
             st.toast("Collection created ✅")
             clear_cache_and_rerun()
 
@@ -351,12 +402,15 @@ with st.sidebar:
     st.caption(f"Polling every {POLL_SECONDS}s")
 
 
-# ---------- Hero ----------
+# ---------- Hero (pulse after actions) ----------
+hero_class = "hj-hero hj-pulse" if st.session_state.pulse_hero else "hj-hero"
+st.session_state.pulse_hero = False  # reset after render
+
 st.markdown(
     f"""
-    <div class="hj-hero">
+    <div class="{hero_class}">
       <h1>{APP_TITLE}</h1>
-      <div class="sub">Favourites • Collections • Playlist-style layout</div>
+      <div class="sub">Favourites • Collections • Smooth animations</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -394,6 +448,7 @@ if st.session_state.page == "Quotes":
                         "collections": {},   # collection_id -> true
                     },
                 )
+                st.session_state.pulse_hero = True
                 st.toast("Quote added ✅")
                 clear_cache_and_rerun()
 
@@ -408,6 +463,7 @@ if st.session_state.page == "Quotes":
                     delete_data(f"/quotes/{st.session_state.pending_delete_quote_id}")
                     st.session_state.pending_delete_quote_id = None
                     st.session_state.pending_delete_quote_label = ""
+                    st.session_state.pulse_hero = True
                     st.toast("Deleted 🗑️")
                     clear_cache_and_rerun()
             with b:
@@ -427,12 +483,12 @@ if st.session_state.page == "Quotes":
         fav_by = q.get("fav_by") or {}
         is_fav = bool(fav_by.get(uid))
 
-        q_cols = q.get("collections") or {}  # cid -> true
+        q_cols = q.get("collections") or {}
         col_ids = [cid for cid, v in q_cols.items() if v]
 
         normalized.append((qid, q_text, q_author, created_raw, is_fav, col_ids))
 
-    # Filter by view
+    # View filter
     if st.session_state.view_mode == "FAV":
         normalized = [r for r in normalized if r[4] is True]
 
@@ -441,20 +497,19 @@ if st.session_state.page == "Quotes":
         normalized = [r for r in normalized if wanted in set(r[5])]
 
     # Search
-    if "q_search" in locals() and q_search.strip():
+    if q_search.strip():
         needle = q_search.strip().lower()
         normalized = [r for r in normalized if needle in (r[1] or "").lower() or needle in (r[2] or "").lower()]
 
     # Sort
-    if "sort_mode" in locals():
-        if sort_mode == "Newest first":
-            normalized.sort(key=lambda r: r[3] or "", reverse=True)
-        elif sort_mode == "Oldest first":
-            normalized.sort(key=lambda r: r[3] or "")
-        else:
-            normalized.sort(key=lambda r: (r[2] or "").lower())
+    if sort_mode == "Newest first":
+        normalized.sort(key=lambda r: r[3] or "", reverse=True)
+    elif sort_mode == "Oldest first":
+        normalized.sort(key=lambda r: r[3] or "")
+    else:
+        normalized.sort(key=lambda r: (r[2] or "").lower())
 
-    # Title
+    # Title card
     with st.container(border=True):
         title = "All Quotes"
         if st.session_state.view_mode == "FAV":
@@ -464,7 +519,7 @@ if st.session_state.page == "Quotes":
         st.markdown(f"#### {title}")
         st.caption(f"{len(normalized)} shown")
 
-    # Render list
+    # Render quotes
     for qid, q_text, q_author, created_raw, is_fav, col_ids in normalized:
         label = f"“{q_text}”" if q_text else "“(empty)”"
         to_copy = q_text + (f" — {q_author}" if q_author else "")
@@ -493,10 +548,10 @@ if st.session_state.page == "Quotes":
                         delete_data(f"/quotes/{qid}/fav_by/{uid}")
                     else:
                         put_value(f"/quotes/{qid}/fav_by/{uid}", True)
+                    st.session_state.pulse_hero = True
                     clear_cache_and_rerun()
 
             with a3:
-                # Collections editor in an expander for clean UI
                 with st.expander("📁 Collections", expanded=False):
                     name_to_id = {v: k for k, v in collection_name_by_id.items()}
                     all_names = [collection_name_by_id[cid] for cid in collection_ids_sorted]
@@ -515,12 +570,12 @@ if st.session_state.page == "Quotes":
                         to_add = desired_ids - current_ids
                         to_remove = current_ids - desired_ids
 
-                        # Update quote -> collections
                         for cid in to_add:
                             put_value(f"/quotes/{qid}/collections/{cid}", True)
                         for cid in to_remove:
                             delete_data(f"/quotes/{qid}/collections/{cid}")
 
+                        st.session_state.pulse_hero = True
                         st.toast("Collections updated ✅")
                         clear_cache_and_rerun()
 
@@ -566,9 +621,7 @@ if st.session_state.page == "Chat":
                 sent = st.form_submit_button("Send", use_container_width=True)
 
                 if sent and msg.strip():
-                    post_data(
-                        "/chat",
-                        {"user": st.session_state.username.strip(), "text": msg.strip(), "ts": now_iso_z()},
-                    )
+                    post_data("/chat", {"user": st.session_state.username.strip(), "text": msg.strip(), "ts": now_iso_z()})
+                    st.session_state.pulse_hero = True
                     st.toast("Sent ✅")
                     clear_cache_and_rerun()
